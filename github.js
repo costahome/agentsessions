@@ -266,12 +266,26 @@ function _compactPr(d, owner, repo, reviews) {
       if (!login || login.toLowerCase() === authorLogin) continue;
       if (String(rv.state).toUpperCase() === 'PENDING') continue;
       // reviews are chronological; keep the last meaningful one per user
-      reviewerMap.set(login, { login, state: rv.state });
+      reviewerMap.set(login, {
+        login,
+        state: rv.state,
+        reviewedCommitId: rv.commit_id || '',
+        reviewedAt: rv.submitted_at || ''
+      });
     }
   }
   const reviewers = [];
   for (const [login, r] of reviewerMap) {
-    reviewers.push({ id: login, name: login, login, vote: _voteFor(r.state), voteLabel: voteLabel(_voteFor(r.state)), isRequired: false });
+    reviewers.push({
+      id: login,
+      name: login,
+      login,
+      vote: _voteFor(r.state),
+      voteLabel: voteLabel(_voteFor(r.state)),
+      isRequired: false,
+      reviewedCommitId: r.reviewedCommitId,
+      reviewedAt: r.reviewedAt
+    });
   }
   for (const rr of (d.requested_reviewers || [])) {
     const login = rr.login || '';
@@ -290,6 +304,7 @@ function _compactPr(d, owner, repo, reviews) {
     mergeStatus: d.mergeable_state || (d.merged ? 'merged' : ''),
     sourceBranch: head.ref || '',
     targetBranch: base.ref || '',
+    sourceHead: head.sha || '',
     creationDate: d.created_at || '',
     closedDate: d.closed_at || '',
     createdBy: {
@@ -396,13 +411,155 @@ async function getReviewers(owner, _project, repo, prId) {
   return _compactPr(d || {}, owner, repo, reviews).reviewers;
 }
 
-// Thread counts. GitHub REST can't tell resolved vs unresolved reliably, so we
-// report open review comments and mark resolution unknown (R3).
+async function _getPrThreadsGraphql(owner, repo, prId) {
+  const query = `query($owner:String!,$repo:String!,$number:Int!,$after:String) {
+    repository(owner:$owner,name:$repo) {
+      pullRequest(number:$number) {
+        reviewThreads(first:100,after:$after) {
+          pageInfo { hasNextPage endCursor }
+          nodes {
+            id isResolved isOutdated
+            comments(first:100) {
+              nodes {
+                databaseId body createdAt updatedAt url path line originalLine
+                author { login }
+              }
+            }
+          }
+        }
+      }
+    }
+  }`;
+  const out = [];
+  let after = null;
+  do {
+    const d = await api('/graphql', {
+      method: 'POST',
+      body: { query, variables: { owner, repo, number: Number(prId), after } }
+    });
+    if (Array.isArray(d.errors) && d.errors.length) {
+      throw new Error(d.errors.map(e => e.message).filter(Boolean).join('; ') || 'GitHub GraphQL thread query failed');
+    }
+    const page = d && d.data && d.data.repository && d.data.repository.pullRequest &&
+      d.data.repository.pullRequest.reviewThreads;
+    if (!page) break;
+    out.push(...(page.nodes || []));
+    after = page.pageInfo && page.pageInfo.hasNextPage ? page.pageInfo.endCursor : null;
+  } while (after && out.length < 300);
+  return out;
+}
+
+// Detailed thread state comes from GraphQL because REST's `position:null`
+// means outdated, not resolved. REST remains a conservative fallback and never
+// labels an outdated thread resolved.
 async function getPrThreads(owner, _project, repo, prId) {
-  let review = [], issue = [];
-  try { review = await apiAll(`/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/pulls/${encodeURIComponent(prId)}/comments`, { cap: 300 }); } catch {}
-  const open = review.filter(c => c.in_reply_to_id == null); // top-level threads
-  return { activeComments: open.length, resolvedComments: 0, totalThreads: open.length, resolutionUnknown: true };
+  let graphqlError = null;
+  try {
+    const reviewThreads = await _getPrThreadsGraphql(owner, repo, prId);
+    const items = reviewThreads.map(thread => {
+      const comments = ((thread.comments && thread.comments.nodes) || [])
+        .slice()
+        .sort((a, b) => String(a.createdAt || '').localeCompare(String(b.createdAt || '')));
+      const root = comments[0] || {};
+      const last = comments[comments.length - 1] || root;
+      return {
+        id: thread.id || String(root.databaseId || ''),
+        status: thread.isResolved ? 'resolved' : (thread.isOutdated ? 'outdated' : 'active'),
+        active: !thread.isResolved,
+        rootAuthorId: String((root.author && root.author.login) || ''),
+        rootAuthor: (root.author && root.author.login) || 'unknown',
+        lastAuthorId: String((last.author && last.author.login) || ''),
+        lastAuthor: (last.author && last.author.login) || 'unknown',
+        lastCommentAt: last.updatedAt || last.createdAt || '',
+        commentCount: comments.length,
+        file: root.path || null,
+        line: root.line || root.originalLine || null,
+        preview: String(root.body || '').trim().replace(/\s+/g, ' ').slice(0, 500),
+        lastPreview: String(last.body || '').trim().replace(/\s+/g, ' ').slice(0, 500),
+        url: root.url || pullRequestUrl(owner, '', repo, prId)
+      };
+    }).filter(t => t.id);
+    const active = items.filter(t => t.active).length;
+    return {
+      activeComments: active,
+      resolvedComments: items.length - active,
+      totalThreads: items.length,
+      resolutionUnknown: false,
+      items
+    };
+  } catch (e) {
+    graphqlError = e;
+  }
+
+  let review = [];
+  try {
+    review = await apiAll(
+      `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/pulls/${encodeURIComponent(prId)}/comments`,
+      { cap: 300 }
+    );
+  } catch (e) {
+    throw new Error(
+      'Could not load GitHub review threads. ' +
+      ((e && e.message) || (graphqlError && graphqlError.message) || '')
+    );
+  }
+  const roots = new Map();
+  for (const c of review) {
+    const rootId = String(c.in_reply_to_id || c.id);
+    if (!roots.has(rootId)) roots.set(rootId, []);
+    roots.get(rootId).push(c);
+  }
+  const items = [...roots.entries()].map(([id, comments]) => {
+    comments.sort((a, b) => String(a.created_at || '').localeCompare(String(b.created_at || '')));
+    const root = comments[0] || {};
+    const last = comments[comments.length - 1] || root;
+    return {
+      id,
+      status: root.position == null ? 'outdated' : 'active',
+      active: true,
+      resolutionUnknown: true,
+      rootAuthorId: String((root.user && root.user.login) || ''),
+      rootAuthor: (root.user && root.user.login) || 'unknown',
+      lastAuthorId: String((last.user && last.user.login) || ''),
+      lastAuthor: (last.user && last.user.login) || 'unknown',
+      lastCommentAt: last.updated_at || last.created_at || '',
+      commentCount: comments.length,
+      file: root.path || null,
+      line: root.line || root.original_line || null,
+      preview: String(root.body || '').trim().replace(/\s+/g, ' ').slice(0, 500),
+      lastPreview: String(last.body || '').trim().replace(/\s+/g, ' ').slice(0, 500),
+      url: root.html_url || pullRequestUrl(owner, '', repo, prId)
+    };
+  });
+  return {
+    activeComments: items.length,
+    resolvedComments: 0,
+    totalThreads: items.length,
+    resolutionUnknown: true,
+    items
+  };
+}
+
+async function getPrCommits(owner, _project, repo, prId, limit = 250) {
+  const commits = await apiAll(
+    `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/pulls/${encodeURIComponent(prId)}/commits`,
+    { cap: Number(limit) || 250 }
+  );
+  return commits.map(c => ({
+    id: c.sha || '',
+    message: String((c.commit && c.commit.message) || '').split(/\r?\n/)[0],
+    author: (c.author && c.author.login) || (c.commit && c.commit.author && c.commit.author.name) || '',
+    date: (c.commit && c.commit.author && c.commit.author.date) || '',
+    url: c.html_url || ''
+  })).filter(c => c.id);
+}
+
+async function getChangedFilesBetween(owner, _project, repo, baseSha, headSha, limit = 300) {
+  if (!baseSha || !headSha || baseSha === headSha) return [];
+  const d = await api(
+    `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/compare/${encodeURIComponent(baseSha)}...${encodeURIComponent(headSha)}`
+  );
+  return (d.files || []).slice(0, Number(limit) || 300).map(f => f.filename).filter(Boolean);
 }
 
 // Detailed open review-comment threads (file/line + comments), for an agent that
@@ -1099,6 +1256,8 @@ module.exports = {
   getRepoContributors,
   getFileContributors,
   getPrChangedFiles,
+  getPrCommits,
+  getChangedFilesBetween,
   listPullRequests,
   listProjectPullRequests,
   getPrThreads,

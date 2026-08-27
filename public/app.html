@@ -2541,6 +2541,51 @@
     .cf-ai-refresh { background:none; border:0; padding:0; color:var(--cp-link); font-size:11px; cursor:pointer; }
     .cf-ai-refresh:hover:not(:disabled) { text-decoration:underline; }
     .cf-ai-refresh:disabled { color:var(--cp-text-soft); cursor:default; }
+    .cf-attention { margin-top:12px; border:1px solid var(--cp-border); border-radius:calc(var(--cp-radius-scale, 1) * 10px); background:var(--cp-surface); overflow:hidden; }
+    .cf-attention-loading { padding:16px; color:var(--cp-text-muted); font-size:12px; }
+    .cf-attention-verdict { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; padding:14px 16px; border-left:4px solid var(--cp-border-strong); background:var(--cp-surface-soft); }
+    .cf-attention-verdict.tone-success { border-left-color:var(--cp-success); }
+    .cf-attention-verdict.tone-warning { border-left-color:var(--cp-warning); }
+    .cf-attention-verdict.tone-danger { border-left-color:var(--cp-danger); }
+    .cf-attention-title { font-size:16px; font-weight:700; line-height:1.25; color:var(--cp-text); }
+    .cf-attention-body { margin-top:3px; color:var(--cp-text-muted); font-size:12px; line-height:1.45; }
+    .cf-attention-track { margin-top:5px; color:var(--cp-text-soft); font-size:10.5px; }
+    .cf-attention-action { flex:0 0 auto; border:1px solid var(--cp-border-strong); background:var(--cp-surface); color:var(--cp-text); border-radius:calc(var(--cp-radius-scale, 1) * 8px); padding:6px 10px; font:inherit; font-size:12px; font-weight:600; cursor:pointer; }
+    .cf-attention-action:hover:not(:disabled) { border-color:var(--cp-accent); color:var(--cp-accent); }
+    .cf-attention-action:disabled { opacity:.55; cursor:default; }
+    .cf-attention-deltas { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); border-top:1px solid var(--cp-border); border-bottom:1px solid var(--cp-border); }
+    .cf-attention-delta { appearance:none; border:0; background:transparent; text-align:left; padding:10px 14px; min-width:0; font:inherit; }
+    .cf-attention-delta + .cf-attention-delta { border-left:1px solid var(--cp-border); }
+    .cf-attention-delta:not(:disabled) { cursor:pointer; }
+    .cf-attention-delta:not(:disabled):hover { background:var(--cp-highlight); }
+    .cf-attention-delta:disabled { cursor:default; }
+    .cf-attention-delta strong { display:block; color:var(--cp-text); font-size:16px; line-height:1.2; }
+    .cf-attention-delta span { display:block; color:var(--cp-text-muted); font-size:10px; margin-top:2px; text-transform:uppercase; letter-spacing:.04em; }
+    .cf-attention-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); }
+    .cf-attention-section { padding:14px 16px; min-width:0; border-bottom:1px solid var(--cp-border); }
+    .cf-attention-section:nth-child(odd) { border-right:1px solid var(--cp-border); }
+    .cf-attention-section:nth-last-child(-n+2) { border-bottom:0; }
+    .cf-attention-section h4 { margin:0 0 6px; font-size:12px; color:var(--cp-text); }
+    .cf-attention-section p { margin:0; color:var(--cp-text-muted); font-size:12px; line-height:1.45; }
+    .cf-attention-links { display:flex; flex-wrap:wrap; gap:5px 14px; margin-top:8px; align-items:center; }
+    .cf-attention-links a, .cf-attention-link { border:0; background:none; padding:0; font:inherit; font-size:11.5px; color:var(--cp-link); text-decoration:none; cursor:pointer; }
+    .cf-attention-links a:hover, .cf-attention-link:hover { text-decoration:underline; }
+    .cf-thread-list { margin-top:9px; display:flex; flex-direction:column; gap:8px; }
+    .cf-thread { min-width:0; padding-left:9px; border-left:2px solid var(--cp-border-strong); }
+    .cf-thread-meta { color:var(--cp-text-soft); font-size:10.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .cf-thread-preview { margin-top:2px; color:var(--cp-text); font-size:11.5px; line-height:1.4; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+    .cf-attention-list { margin:8px 0 0; padding:0; list-style:none; display:flex; flex-direction:column; gap:5px; }
+    .cf-attention-list li { display:flex; gap:8px; min-width:0; color:var(--cp-text-muted); font-size:11px; }
+    .cf-attention-list code { color:var(--cp-text-soft); font-family:Consolas,"Courier New",Courier,monospace; }
+    .cf-attention-list .txt { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    @media (max-width:760px) {
+      .cf-attention-deltas { grid-template-columns:repeat(2,minmax(0,1fr)); }
+      .cf-attention-delta:nth-child(3) { border-left:0; border-top:1px solid var(--cp-border); }
+      .cf-attention-delta:nth-child(4) { border-top:1px solid var(--cp-border); }
+      .cf-attention-grid { grid-template-columns:1fr; }
+      .cf-attention-section:nth-child(odd) { border-right:0; }
+      .cf-attention-section:nth-last-child(2) { border-bottom:1px solid var(--cp-border); }
+    }
     .cf-wt-envs { display:flex; flex-wrap:wrap; align-items:center; gap:10px; }
     .cf-panes { min-width:0; }
     .cf-pane { min-width:0; }
@@ -16133,7 +16178,7 @@
                   </div>
                   <div class="cf-group-items" x-show="!grp.label || cfGrpIsOpen(grp)">
                     <template x-for="pr in grp.items" :key="pr.org + '/' + pr.repo + '/' + pr.id">
-                <article class="cf-pr-card" :id="'cfpr-' + cfPrKey(pr)" :class="{ 'cf-attn': pr.attention, 'cf-focus': codeflow.focusKey && codeflow.focusKey === cfPrKey(pr) }">
+                <article class="cf-pr-card" :id="'cfpr-' + cfPrKey(pr)" :class="{ 'cf-attn': pr.attention, 'cf-focus': codeflow.focusKey && codeflow.focusKey === cfPrKey(pr) }" x-init="initCfAttentionCard(pr, $el)">
                   <div class="cf-pr-top">
                     <div style="flex:1;min-width:0">
                       <a class="cf-pr-title" :href="pr.url" target="_blank" rel="noopener" x-text="pr.title"></a>
@@ -16208,6 +16253,111 @@
                       </template>
                       <button type="button" class="cf-ai-refresh" @click.stop="loadCodeflowAi(true)" :disabled="codeflow.aiBusy"
                               x-text="codeflow.aiBusy ? 'Refreshing…' : (codeflowAi(pr) ? '↻ Refresh AI' : '✨ Analyze')"></button>
+                    </div>
+                  </div>
+
+                  <div class="cf-attention">
+                    <div class="cf-attention-loading" x-show="cfAttentionLoading(pr) && !cfAttention(pr)">Checking commits, feedback, approvals, and worktree state…</div>
+                    <template x-if="cfAttention(pr)">
+                      <div>
+                        <div class="cf-attention-verdict" :class="'tone-' + cfAttention(pr).verdict.tone">
+                          <div>
+                            <div class="cf-attention-title" x-text="cfAttention(pr).verdict.title"></div>
+                            <div class="cf-attention-body" x-text="cfAttention(pr).verdict.body"></div>
+                            <div class="cf-attention-track" x-text="cfTrackingSummary(pr)"></div>
+                          </div>
+                          <button type="button" class="cf-attention-action"
+                                  x-show="cfAttentionNeedsAck(pr)"
+                                  :disabled="cfAttentionBusy(pr)"
+                                  @click.stop="cfMarkCaughtUp(pr)"
+                                  x-text="cfAttentionBusy(pr) ? 'Saving…' : 'Mark caught up'"></button>
+                        </div>
+                        <div class="cf-attention-deltas">
+                          <button type="button" class="cf-attention-delta"
+                                  :disabled="!cfAttention(pr).deltas.commits"
+                                  @click.stop="cfOpenPrArea(pr, 'files')"
+                                  :title="cfAttention(pr).deltas.commits ? 'View the changed commits and files in the PR' : 'No new commits since the checkpoint'">
+                            <strong x-text="cfAttention(pr).deltas.commits"></strong><span>new commits</span>
+                          </button>
+                          <button type="button" class="cf-attention-delta"
+                                  :disabled="!cfAttention(pr).deltas.comments && !cfAttention(pr).deltas.activeFeedback"
+                                  @click.stop="cfOpenFirstFeedback(pr)"
+                                  :title="cfAttention(pr).deltas.activeFeedback ? 'Open the first active feedback thread' : 'Open PR discussion'">
+                            <strong x-text="cfAttention(pr).deltas.comments"></strong><span>new comments</span>
+                          </button>
+                          <button type="button" class="cf-attention-delta"
+                                  :disabled="!cfAttention(pr).deltas.files"
+                                  @click.stop="cfOpenPrArea(pr, 'files')"
+                                  :title="cfAttention(pr).deltas.files ? 'View changed files in the PR' : 'No files changed since the checkpoint'">
+                            <strong x-text="cfAttention(pr).deltas.files"></strong><span>files changed</span>
+                          </button>
+                          <button type="button" class="cf-attention-delta"
+                                  :disabled="!cfAttention(pr).deltas.addressed"
+                                  @click.stop="cfOpenAddressedFeedback(pr)"
+                                  :title="cfAttention(pr).deltas.addressed ? 'Review the PR discussion and resolved feedback' : 'No tracked feedback was addressed since the checkpoint'">
+                            <strong x-text="cfAttention(pr).deltas.addressed"></strong><span>feedback addressed</span>
+                          </button>
+                        </div>
+                        <div class="cf-attention-grid">
+                          <section class="cf-attention-section">
+                            <h4>What changed</h4>
+                            <p x-text="cfChangesSummary(pr)"></p>
+                            <ul class="cf-attention-list" x-show="cfAttention(pr).newCommits.length">
+                              <template x-for="c in cfAttention(pr).newCommits.slice(0,3)" :key="c.id">
+                                <li>
+                                  <code x-text="String(c.id).slice(0,7)"></code>
+                                  <a class="txt cf-attention-link" :href="c.url || cfPrAreaUrl(pr, 'files')" target="_blank" rel="noopener" x-text="c.message || 'Commit'"></a>
+                                </li>
+                              </template>
+                            </ul>
+                            <div class="cf-attention-links">
+                              <a :href="cfPrAreaUrl(pr, 'files')" target="_blank" rel="noopener">View changes in PR</a>
+                            </div>
+                          </section>
+                          <section class="cf-attention-section">
+                            <h4>Feedback</h4>
+                            <p x-text="cfFeedbackSummary(pr)"></p>
+                            <div class="cf-thread-list" x-show="cfFeedbackThreads(pr).length">
+                              <template x-for="t in cfFeedbackThreads(pr).slice(0,3)" :key="t.id">
+                                <div class="cf-thread">
+                                  <div class="cf-thread-meta" x-text="cfThreadLocation(t) + ' · ' + (t.rootAuthor || 'Reviewer') + (t.active === false ? ' · addressed' : '')"></div>
+                                  <div class="cf-thread-preview" x-text="t.preview || t.lastPreview || 'Review discussion'"></div>
+                                  <div class="cf-attention-links">
+                                    <a :href="t.url || pr.url" target="_blank" rel="noopener">Open thread in PR</a>
+                                  </div>
+                                </div>
+                              </template>
+                            </div>
+                            <div class="cf-attention-links" x-show="!cfFeedbackThreads(pr).length">
+                              <a :href="cfPrAreaUrl(pr, 'discussion')" target="_blank" rel="noopener">Open PR discussion</a>
+                            </div>
+                            <p x-show="cfAttention(pr).comments.resolutionUnknown" style="margin-top:7px">GitHub marks outdated threads, but its REST API cannot confirm every resolved conversation.</p>
+                          </section>
+                          <section class="cf-attention-section">
+                            <h4>Activity and approval</h4>
+                            <p x-text="cfApprovalSummary(pr)"></p>
+                            <div class="cf-attention-links">
+                              <a :href="pr.url" target="_blank" rel="noopener">Review or approve PR</a>
+                              <button type="button" class="cf-attention-link" @click.stop="loadCfAttention(pr, true)">Refresh state</button>
+                            </div>
+                          </section>
+                          <section class="cf-attention-section">
+                            <h4>Worktree</h4>
+                            <p x-text="cfAttentionWorktreeSummary(pr)"></p>
+                            <div class="cf-attention-links" x-show="cfAttention(pr).worktree">
+                              <button type="button" class="cf-attention-link" @click.stop="openCfWorktree(pr, 'editor')">Open in VS Code</button>
+                              <button type="button" class="cf-attention-link" @click.stop="openCfWorktree(pr, 'diff')">Open local diff</button>
+                            </div>
+                            <div class="cf-attention-links" x-show="!cfAttention(pr).worktree">
+                              <button type="button" class="cf-attention-link" @click.stop="createCfWorktree(pr)">Create worktree</button>
+                            </div>
+                          </section>
+                        </div>
+                      </div>
+                    </template>
+                    <div class="cf-attention-loading" x-show="!cfAttentionLoading(pr) && cfAttentionError(pr)">
+                      <span x-text="cfAttentionError(pr)"></span>
+                      <button type="button" class="cf-attention-link" style="margin-left:8px" @click.stop="loadCfAttention(pr, true)">Retry</button>
                     </div>
                   </div>
 
@@ -22917,6 +23067,10 @@
           aiGeneratedAt: null,
           worktrees: {},         // prKey -> review-worktree record
           wtBusy: {},            // prKey -> action string while busy
+          attentionDetails: {},  // prKey -> durable checkpoint comparison
+          attentionLoading: {},  // prKey -> bool
+          attentionErrors: {},   // prKey -> message
+          attentionSaving: {},   // prKey -> bool
           boardPrs: {},          // cfPrKey -> full PR object for board-pinned PRs (parity with the Code Flow card)
           boardPrsLoading: false,
           boardPrsLoadedFor: '',  // boardId the boardPrs map was last loaded for (one fetch per board view)
@@ -33940,6 +34094,9 @@ grpCollapsed: (() => { try { return JSON.parse(localStorage.getItem('cfGrpCollap
             this.codeflow.errors = Array.isArray(prResp.errors) ? prResp.errors : [];
             this.codeflow.attentionCount = prResp.attentionCount || 0;
             this.codeflow.fetchedAt = prResp.fetchedAt || null;
+            for (const pr of this.codeflow.pullRequests) {
+              if (this.codeflow.attentionDetails[this.cfPrKey(pr)]) this.loadCfAttention(pr, true);
+            }
             this.loadCodeflowAttention(true);
             // Re-generate AI summaries for any PRs that changed since last analysis.
             if (this.codeflow.pullRequests.length) this.loadCodeflowAi(false, true);
@@ -34006,6 +34163,9 @@ grpCollapsed: (() => { try { return JSON.parse(localStorage.getItem('cfGrpCollap
             this.codeflow.attentionCount = data.attentionCount || 0;
             this.codeflow.fetchedAt = data.fetchedAt || null;
             if (list.length) this.loadCodeflowAi(false, true);
+            for (const pr of list) {
+              if (this.codeflow.attentionDetails[this.cfPrKey(pr)]) this.loadCfAttention(pr, true);
+            }
           }
           this._codeflowSnaps[view] = next;
           if (!prev) return; // first observation for this view — just baseline.
@@ -34388,6 +34548,184 @@ grpCollapsed: (() => { try { return JSON.parse(localStorage.getItem('cfGrpCollap
           // prefix); GitHub is namespaced with an empty project slot.
           const base = [pr.org, pr.project || '', pr.repo, pr.id].join('|').toLowerCase();
           return String(pr.provider || 'azdo').toLowerCase() === 'github' ? ('github|' + base) : base;
+        },
+        _cfAttentionQuery(pr) {
+          return 'org=' + encodeURIComponent(pr.org || '') +
+            '&project=' + encodeURIComponent(pr.project || '') +
+            '&repo=' + encodeURIComponent(pr.repo || '') +
+            '&prId=' + encodeURIComponent(pr.id || pr.pullRequestId || '') +
+            '&provider=' + encodeURIComponent(pr.provider || 'azdo') +
+            '&view=' + encodeURIComponent(this.codeflow.view || '');
+        },
+        initCfAttentionCard(pr, el) {
+          if (!pr || !el || typeof IntersectionObserver === 'undefined') {
+            this.loadCfAttention(pr);
+            return;
+          }
+          const observer = new IntersectionObserver(entries => {
+            if (!entries.some(entry => entry.isIntersecting)) return;
+            observer.disconnect();
+            this.loadCfAttention(pr);
+          }, { rootMargin: '240px 0px' });
+          observer.observe(el);
+        },
+        cfAttention(pr) {
+          return pr ? (this.codeflow.attentionDetails[this.cfPrKey(pr)] || null) : null;
+        },
+        cfAttentionLoading(pr) {
+          return !!(pr && this.codeflow.attentionLoading[this.cfPrKey(pr)]);
+        },
+        cfAttentionError(pr) {
+          return pr ? (this.codeflow.attentionErrors[this.cfPrKey(pr)] || '') : '';
+        },
+        cfAttentionBusy(pr) {
+          return !!(pr && this.codeflow.attentionSaving[this.cfPrKey(pr)]);
+        },
+        async loadCfAttention(pr, force) {
+          if (!pr || pr._orphan) return;
+          const key = this.cfPrKey(pr);
+          if (!force && (this.codeflow.attentionLoading[key] || this.codeflow.attentionDetails[key])) return;
+          this.codeflow.attentionLoading = { ...this.codeflow.attentionLoading, [key]: true };
+          this.codeflow.attentionErrors = { ...this.codeflow.attentionErrors, [key]: '' };
+          try {
+            const r = await this.request('/api/codeflow/pr/attention?' + this._cfAttentionQuery(pr));
+            if (r && r.attention) {
+              this.codeflow.attentionDetails = { ...this.codeflow.attentionDetails, [key]: r.attention };
+            }
+          } catch (e) {
+            this.codeflow.attentionErrors = {
+              ...this.codeflow.attentionErrors,
+              [key]: (e && e.message) || 'Detailed PR activity is unavailable.'
+            };
+          } finally {
+            this.codeflow.attentionLoading = { ...this.codeflow.attentionLoading, [key]: false };
+          }
+        },
+        async cfMarkCaughtUp(pr) {
+          if (!pr) return;
+          const key = this.cfPrKey(pr);
+          this.codeflow.attentionSaving = { ...this.codeflow.attentionSaving, [key]: true };
+          try {
+            const r = await this.request('/api/codeflow/pr/attention/checkpoint', {
+              method: 'POST',
+              body: JSON.stringify({
+                org: pr.org || '',
+                project: pr.project || '',
+                repo: pr.repo || '',
+                prId: pr.id || pr.pullRequestId || '',
+                provider: pr.provider || 'azdo',
+                view: this.codeflow.view || ''
+              })
+            });
+            if (r && r.attention) {
+              this.codeflow.attentionDetails = { ...this.codeflow.attentionDetails, [key]: r.attention };
+            }
+            this.showToast('PR activity', 'Caught-up point updated.', 'success');
+          } catch (e) {
+            this.showToast('PR activity', (e && e.message) || 'Could not update the checkpoint.', 'error');
+          } finally {
+            this.codeflow.attentionSaving = { ...this.codeflow.attentionSaving, [key]: false };
+          }
+        },
+        cfAttentionNeedsAck(pr) {
+          const a = this.cfAttention(pr);
+          if (!a) return false;
+          const d = a.deltas || {};
+          return !!(d.commits || d.comments || d.addressed || d.awaitingConfirmation);
+        },
+        cfTrackingSummary(pr) {
+          const a = this.cfAttention(pr);
+          const t = a && a.tracking;
+          if (!t) return '';
+          const when = t.at ? (' · ' + this.formatRelative(t.at)) : '';
+          if (t.reason === 'approval-recorded') return 'Checkpoint advanced automatically when your approval was recorded' + when;
+          if (t.reason === 'first-observed') return 'Tracking began automatically on first observation' + when;
+          return 'Tracking from your last caught-up point' + when;
+        },
+        cfChangesSummary(pr) {
+          const a = this.cfAttention(pr);
+          if (!a) return '';
+          const d = a.deltas || {};
+          if (a.changedFilesError) return `${d.commits || 0} new commit${d.commits === 1 ? '' : 's'}; file comparison unavailable: ${a.changedFilesError}`;
+          if (!d.commits) return 'The PR head has not changed since your checkpoint.';
+          return `${d.commits} new ${d.commits === 1 ? 'commit' : 'commits'} touching ${d.files} ${d.files === 1 ? 'file' : 'files'}.`;
+        },
+        cfFeedbackSummary(pr) {
+          const a = this.cfAttention(pr);
+          if (!a) return '';
+          const d = a.deltas || {};
+          const parts = [];
+          if (d.addressed) parts.push(`${d.addressed} addressed`);
+          if (d.awaitingConfirmation) parts.push(`${d.awaitingConfirmation} awaiting your confirmation`);
+          if (d.activeFeedback) parts.push(`${d.activeFeedback} still open`);
+          if (d.comments) parts.push(`${d.comments} new comment${d.comments === 1 ? '' : 's'}`);
+          return parts.length ? parts.join(' · ') : 'No feedback is waiting on you.';
+        },
+        cfFeedbackThreads(pr) {
+          const a = this.cfAttention(pr);
+          if (!a) return [];
+          const seen = new Set();
+          return [...(a.activeThreads || []), ...(a.changedThreads || []), ...(a.addressedThreads || [])].filter(t => {
+            const key = String(t.id);
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+          });
+        },
+        cfThreadLocation(t) {
+          if (!t || !t.file) return 'General discussion';
+          return t.file + (t.line ? ':' + t.line : '');
+        },
+        cfApprovalSummary(pr) {
+          const a = this.cfAttention(pr);
+          if (!a) return '';
+          const x = a.approval || {};
+          if (x.requiresReapproval) return 'Your prior approval was reset; review and approve again.';
+          if (x.changedAfterReview) return 'Your approval predates the current PR head.';
+          if (x.approvalsDropped) return `${x.approvalsDropped} reviewer approval${x.approvalsDropped === 1 ? ' was' : 's were'} reset after changes.`;
+          if (x.approvalsOutdated) return `${x.approvalsOutdated} current approval${x.approvalsOutdated === 1 ? ' predates' : 's predate'} the latest commit.`;
+          return (a.deltas || {}).comments
+            ? `${a.deltas.comments} new discussion comment${a.deltas.comments === 1 ? '' : 's'} since your checkpoint.`
+            : 'No approval or discussion changes since your checkpoint.';
+        },
+        cfAttentionWorktreeSummary(pr) {
+          const a = this.cfAttention(pr);
+          const w = a && a.worktree;
+          if (!w) return 'No local review worktree is linked to this PR.';
+          if (w.status && w.status !== 'ready') return `Worktree is ${w.status}.`;
+          const d = w.drift || {};
+          const parts = [];
+          if (d.comparable) {
+            if (d.ahead) parts.push(`${d.ahead} to push`);
+            if (d.behind) parts.push(`${d.behind} to pull`);
+            if (!d.ahead && !d.behind) parts.push('remote branch in sync');
+          } else {
+            parts.push('remote comparison not checked');
+          }
+          parts.push(w.changeCount ? `${w.changeCount} uncommitted file${w.changeCount === 1 ? '' : 's'}` : 'working tree clean');
+          if (w.changeError) parts.push(w.changeError);
+          return parts.join(' · ') + '.';
+        },
+        cfPrAreaUrl(pr, area) {
+          const base = (pr && pr.url) || '#';
+          if (!pr || base === '#') return base;
+          if (pr.provider === 'github') return area === 'files' ? base.replace(/\/$/, '') + '/files' : base;
+          return area === 'files' ? base + (base.includes('?') ? '&' : '?') + '_a=files' : base;
+        },
+        cfOpenPrArea(pr, area) {
+          const url = this.cfPrAreaUrl(pr, area);
+          if (url && url !== '#') window.open(url, '_blank', 'noopener');
+        },
+        cfOpenFirstFeedback(pr) {
+          const first = this.cfFeedbackThreads(pr)[0];
+          const url = (first && first.url) || this.cfPrAreaUrl(pr, 'discussion');
+          if (url && url !== '#') window.open(url, '_blank', 'noopener');
+        },
+        cfOpenAddressedFeedback(pr) {
+          const a = this.cfAttention(pr);
+          const first = a && (a.addressedThreads || [])[0];
+          const url = (first && first.url) || this.cfPrAreaUrl(pr, 'discussion');
+          if (url && url !== '#') window.open(url, '_blank', 'noopener');
         },
         // Scroll to and briefly highlight a PR on the Code Flows page after a
         // deep-link (e.g. from a dev card's PR link). The target is usually one of
@@ -34872,7 +35210,11 @@ grpCollapsed: (() => { try { return JSON.parse(localStorage.getItem('cfGrpCollap
             catch { continue; }
             if (resp && resp.worktree) {
               this.codeflow.worktrees[key] = resp.worktree;
-              if (resp.worktree.worktreeStatus === 'ready' || resp.worktree.worktreeStatus === 'error') return;
+              if (resp.worktree.worktreeStatus === 'ready' || resp.worktree.worktreeStatus === 'error') {
+                const pr = (this.codeflow.pullRequests || []).find(p => this.cfPrKey(p) === key);
+                if (pr) this.loadCfAttention(pr, true);
+                return;
+              }
             }
           }
         },
