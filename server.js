@@ -4213,12 +4213,92 @@ app.post('/api/codeflow/pr/worktree/sync', (req, res) => {
   }
 });
 
+async function _cfAiResolveUpdateConflicts(workDir, { strategy, targetBranch }) {
+  const mode = strategy === 'rebase' ? 'rebase' : 'merge';
+  const model = (settings.resolveModel && settings.resolveModel('execution', null)) || undefined;
+  const resolved = [];
+  const maxRounds = 20;
+  const fail = (result) => {
+    const conflicts = result.conflicts || devitems.conflictedFiles(workDir);
+    const aborted = devitems.abortConflictUpdate(workDir, { strategy: mode });
+    return {
+      ok: false,
+      manualRequired: true,
+      ...result,
+      conflicts,
+      resolved: Array.from(new Set(resolved)),
+      operationAborted: !!aborted.ok,
+      abortError: aborted.ok ? null : aborted.message
+    };
+  };
+  for (let round = 1; round <= maxRounds; round++) {
+    const conflicts = devitems.conflictedFiles(workDir);
+    if (!conflicts.length) {
+      return fail({ conflicts: [], message: 'Git reported a conflict but no unmerged files could be identified.' });
+    }
+    const prompt = [
+      'Resolve the current Git ' + mode + ' conflicts in this worktree autonomously.',
+      'Integrate the intent of both the current branch and origin/' + targetBranch + '; preserve behavior from both sides where compatible.',
+      'Inspect the surrounding code and history before choosing a resolution. Make the smallest coherent resolution and do not discard unrelated work.',
+      'Resolve EVERY currently unmerged path, remove all conflict markers, and stage each resolved path with git add.',
+      'Do not commit, continue, abort, push, reset, or start another merge/rebase. The host will continue Git after verifying your staged resolution.',
+      'If a conflict cannot be resolved safely from repository context, leave that path unmerged and explain why in your final response.',
+      '',
+      'Currently conflicted paths:',
+      conflicts.map(p => '- ' + p).join('\n')
+    ].join('\n');
+    try {
+      const run = await sdkRunner.runPrompt({
+        prompt,
+        cwd: workDir,
+        sessionId: require('crypto').randomUUID(),
+        model,
+        meta: { source: 'system', category: 'pull_requests' }
+      });
+      if (!run || !run.ok || run.fallback) {
+        return fail({
+          aiUnavailable: true,
+          message: 'AI conflict resolution is unavailable: ' + ((run && (run.error || run.output)) || 'the execution agent did not start')
+        });
+      }
+    } catch (e) {
+      return fail({
+        aiUnavailable: true,
+        message: 'AI conflict resolution could not run: ' + ((e && e.message) || e)
+      });
+    }
+    const remaining = devitems.conflictedFiles(workDir);
+    if (remaining.length) {
+      return fail({
+        conflicts: remaining,
+        message: 'AI could not safely resolve ' + remaining.length + ' conflicted file' + (remaining.length === 1 ? '' : 's') + '.'
+      });
+    }
+    resolved.push(...conflicts);
+    const continued = devitems.continueConflictUpdate(workDir, { strategy: mode, targetBranch });
+    if (continued.ok) {
+      return { ok: true, aiResolved: true, resolved: Array.from(new Set(resolved)) };
+    }
+    if (!continued.conflict) {
+      return fail({
+        conflicts: [],
+        message: continued.message || ('AI resolved the files, but Git could not continue the ' + mode + '.')
+      });
+    }
+    // A rebase can reveal a new conflict at each replayed commit. Resolve the
+    // next set in another round rather than escalating prematurely.
+  }
+  return fail({
+    message: 'AI conflict resolution reached the safety limit before Git completed the ' + mode + '.'
+  });
+}
+
 // Update the PR/source branch FROM its target (base) branch — merge or rebase
 // origin/<targetBranch> into the local worktree ("my PR is behind main, catch it
 // up"). This is the opposite direction of /worktree/sync. Does NOT push; the user
 // pushes afterwards via /pr/push. On conflict returns 409 {conflict:true} so the
-// client can offer the other strategy or manual resolution.
-app.post('/api/codeflow/pr/worktree/update-from-target', (req, res) => {
+// client only needs to involve the user if automatic AI resolution cannot finish.
+app.post('/api/codeflow/pr/worktree/update-from-target', async (req, res) => {
   const b = req.body || {};
   const o = { org: b.org, project: b.project, repo: b.repo, prId: b.prId, provider: b.provider };
   if (!_cfPrOk(o)) return res.status(400).json({ error: 'org, repo and prId are required' });
@@ -4231,16 +4311,58 @@ app.post('/api/codeflow/pr/worktree/update-from-target', (req, res) => {
   if (!rec.sourceBranch) return res.status(400).json({ error: 'No PR source branch on record.' });
   try {
     const workDir = _cfUsableDir(rec) || rec.worktreePath;
-    const r = devitems.updateFromTargetBranch(workDir, { sourceBranch: rec.sourceBranch, targetBranch, strategy });
-    if (!r || r.ok === false) {
+    const strategies = [strategy, strategy === 'rebase' ? 'merge' : 'rebase'];
+    let lastResolution = null;
+    for (const attemptStrategy of strategies) {
+      const r = devitems.updateFromTargetBranch(workDir, {
+        sourceBranch: rec.sourceBranch, targetBranch, strategy: attemptStrategy, desc: o, preserveConflict: true
+      });
+      if (r && r.ok) {
+        const updated = _saveCfWt(key, r.drift ? { drift: r.drift } : {});
+        return res.json({
+          ok: true, message: r.message, noop: !!r.noop, strategy: attemptStrategy,
+          drift: r.drift || null, worktree: { key, ...updated }
+        });
+      }
+      if (r && r.conflict) {
+        const resolution = await _cfAiResolveUpdateConflicts(workDir, { strategy: attemptStrategy, targetBranch });
+        lastResolution = resolution;
+        if (resolution.ok) {
+          const drift = devitems.prDrift(workDir, rec.sourceBranch, { fetch: false, desc: o });
+          const updated = _saveCfWt(key, { drift });
+          return res.json({
+            ok: true,
+            message: 'Updated from ' + targetBranch + '; AI resolved ' + resolution.resolved.length + ' conflicted file' + (resolution.resolved.length === 1 ? '' : 's') + '.',
+            aiResolved: true,
+            resolvedFiles: resolution.resolved,
+            strategy: attemptStrategy,
+            usedAlternateStrategy: attemptStrategy !== strategy,
+            drift,
+            worktree: { key, ...updated }
+          });
+        }
+        // A second Git strategy cannot help when the execution agent itself is
+        // unavailable. Avoid repeating the same doomed model invocation.
+        if (resolution.aiUnavailable || !resolution.operationAborted) break;
+        continue;
+      }
       return res.status(409).json({
         error: (r && r.message) || 'Update failed.',
         conflict: !!(r && r.conflict), needsClean: !!(r && r.needsClean),
-        strategy: (r && r.strategy) || strategy, drift: r && r.drift
+        strategy: (r && r.strategy) || attemptStrategy, drift: r && r.drift
       });
     }
-    const updated = _saveCfWt(key, r.drift ? { drift: r.drift } : {});
-    res.json({ ok: true, message: r.message, noop: !!r.noop, drift: r.drift || null, worktree: { key, ...updated } });
+    return res.status(409).json({
+      error: (lastResolution && lastResolution.message) || 'AI could not safely resolve the conflicts with either Git strategy.',
+      conflict: true,
+      aiAttempted: true,
+      manualRequired: true,
+      operationAborted: !!(lastResolution && lastResolution.operationAborted),
+      abortError: lastResolution && lastResolution.abortError,
+      conflicts: (lastResolution && lastResolution.conflicts) || [],
+      resolvedFiles: (lastResolution && lastResolution.resolved) || [],
+      strategy
+    });
   } catch (e) {
     res.status(500).json({ error: (e && e.message) || 'Update failed' });
   }
@@ -20671,8 +20793,20 @@ app.post('/api/fs/list', (req, res) => {
 app.post('/api/fs/open', (req, res) => {
   const dir = String((req.body && req.body.path) || '').trim();
   const target = String((req.body && req.body.target) || 'editor').trim();
+  const requestedFile = String((req.body && req.body.file) || '').trim().replace(/\\/g, '/');
   if (!dir) return res.status(400).json({ error: 'path required' });
   if (!_validDir(dir)) return res.status(404).json({ error: 'Folder not found', path: dir });
+  let requestedPath = '';
+  if (requestedFile) {
+    if (path.posix.isAbsolute(requestedFile) || requestedFile.split('/').includes('..')) {
+      return res.status(400).json({ error: 'file must be a repo-relative path' });
+    }
+    const root = path.resolve(dir);
+    requestedPath = path.resolve(root, requestedFile.split('/').join(path.sep));
+    if (!requestedPath.startsWith(root + path.sep)) {
+      return res.status(400).json({ error: 'file must be inside the worktree' });
+    }
+  }
   const { spawn, spawnSync, exec } = require('child_process');
   try {
     if (target === 'explorer') {
@@ -20705,11 +20839,17 @@ app.post('/api/fs/open', (req, res) => {
       const baseLabel = base || from.slice(0, 12);
       // Changed files vs the base (rename/copy aware), including uncommitted working changes.
       const ns = gitText(['diff', '--name-status', '-M', '--no-color', from]);
-      const rows = ns.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+      let rows = ns.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
       // Also include brand-new untracked files (git diff omits them) as add-diffs.
       const untracked = gitText(['ls-files', '--others', '--exclude-standard'])
         .split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
       for (const u of untracked) rows.push(`A\t${u}`);
+      if (requestedFile) {
+        rows = rows.filter((row) => {
+          const parts = row.split('\t');
+          return parts.slice(1).some((rel) => rel === requestedFile);
+        });
+      }
       if (!rows.length) return res.json({ ok: true, target, empty: true, base: baseLabel });
       const CAP = 40;
       const safe = (headRef || 'branch').replace(/[^A-Za-z0-9._-]+/g, '-').slice(0, 50) || 'branch';
@@ -20831,14 +20971,17 @@ app.post('/api/fs/open', (req, res) => {
       exec(`start "Copilot Session" "${batPath}"`);
       return res.json({ ok: true, target });
     }
+    if (requestedFile && !fs.existsSync(requestedPath)) {
+      return res.status(404).json({ error: 'File not found', file: requestedFile });
+    }
     // default: editor (Insiders preferred). target 'code' forces stable VS Code.
     if (target === 'code') {
-      spawn('code', [dir], { shell: true, detached: true, stdio: 'ignore' }).unref();
+      spawn('code', [requestedPath || dir], { shell: true, detached: true, stdio: 'ignore' }).unref();
       return res.json({ ok: true, target, editor: 'code' });
     }
     const insiders = spawnSync('where', ['code-insiders'], { shell: true, encoding: 'utf-8' });
     const editor = insiders.status === 0 ? 'code-insiders' : 'code';
-    spawn(editor, [dir], { shell: true, detached: true, stdio: 'ignore' }).unref();
+    spawn(editor, [requestedPath || dir], { shell: true, detached: true, stdio: 'ignore' }).unref();
     return res.json({ ok: true, target, editor });
   } catch (e) {
     return res.status(500).json({ error: (e && e.message) || 'open failed' });
@@ -22817,6 +22960,7 @@ app.post('/api/boards/:id/dev-items/:devId/pr', async (req, res) => {
   // PRs are per repo slot: the primary repo stores prId/pr at the top level; an
   // extra repo stores them inside its d.repos[] entry. Default to the primary.
   const slotId = (req.body && req.body.repoId) || 'primary';
+  const draft = !!(req.body && req.body.draft);
   const slot = _findRepoSlot(d, slotId);
   if (!slot || !slot.org || !slot.project || !slot.repo) return res.status(400).json({ error: 'Dev card repo is missing org/project/repo.' });
   const existingPrId = slot.primary ? d.prId : slot.prId;
@@ -22880,7 +23024,7 @@ app.post('/api/boards/:id/dev-items/:devId/pr', async (req, res) => {
   let pr;
   try {
     pr = await _devCreatePullRequest(_devDesc(slot), {
-      sourceBranch, targetBranch: base, title, description, workItemId: d.workItemId || null
+      sourceBranch, targetBranch: base, title, description, workItemId: d.workItemId || null, draft
     });
   } catch (e) {
     return res.status(500).json({ error: 'Failed to create PR: ' + ((e && e.message) || e) });
