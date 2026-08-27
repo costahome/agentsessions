@@ -89,6 +89,7 @@ const BOARDS_PATH = dataPath('boards.json');
 const INSIGHTS_PATH = dataPath('insights.json');
 const CODEFLOW_PATH = dataPath('codeflow-repos.json');
 const CODEFLOW_WT_PATH = dataPath('codeflow-worktrees.json');
+const CODEFLOW_CHECKPOINT_PATH = dataPath('codeflow-pr-checkpoints.json');
 
 // ---- Atomic + resilient agents.json IO ----
 // agents.json is user-global (shared by the desktop sidecar AND a dev server, and
@@ -349,6 +350,27 @@ function loadCodeflowWorktrees() {
 }
 function saveCodeflowWorktrees(map) {
   fs.writeFileSync(CODEFLOW_WT_PATH, JSON.stringify(map || {}, null, 2));
+}
+function loadCodeflowCheckpoints() {
+  try {
+    if (!fs.existsSync(CODEFLOW_CHECKPOINT_PATH)) return {};
+    const v = JSON.parse(fs.readFileSync(CODEFLOW_CHECKPOINT_PATH, 'utf-8'));
+    return (v && typeof v === 'object') ? v : {};
+  } catch { return {}; }
+}
+function saveCodeflowCheckpoints(map) {
+  fs.writeFileSync(CODEFLOW_CHECKPOINT_PATH, JSON.stringify(map || {}, null, 2));
+}
+function _saveCodeflowCheckpoint(key, snapshot, reason = 'manual', automatic = false) {
+  const map = loadCodeflowCheckpoints();
+  map[key] = {
+    ...snapshot,
+    checkpointedAt: new Date().toISOString(),
+    reason,
+    automatic
+  };
+  saveCodeflowCheckpoints(map);
+  return map[key];
 }
 function _getCfWt(key) {
   const map = loadCodeflowWorktrees();
@@ -3638,6 +3660,285 @@ function _writeCfReviewAgentFile(rec, pr, workItems, opts = {}) {
   }
   return { reviewAgentName: slug, reviewAgentFile: rel, agentKind: kind };
 }
+
+function _cfAttentionSnapshot(pr, threads, commits, viewerId) {
+  const viewer = String(viewerId || '').toLowerCase();
+  const reviewers = Array.isArray(pr.reviewers) ? pr.reviewers : [];
+  const mine = reviewers.find(r => String(r.id || r.login || '').toLowerCase() === viewer);
+  return {
+    checkedAt: new Date().toISOString(),
+    sourceHead: pr.sourceHead || pr.headSha || (commits.length ? commits[commits.length - 1].id : ''),
+    commitIds: commits.map(c => c.id),
+    threads: (threads.items || []).map(t => ({
+      id: String(t.id),
+      active: !!t.active,
+      rootAuthorId: String(t.rootAuthorId || ''),
+      rootAuthor: t.rootAuthor || '',
+      lastAuthorId: String(t.lastAuthorId || ''),
+      lastAuthor: t.lastAuthor || '',
+      lastCommentAt: t.lastCommentAt || '',
+      commentCount: Number(t.commentCount) || 0,
+      file: t.file || null,
+      line: t.line || null,
+      preview: t.preview || '',
+      lastPreview: t.lastPreview || '',
+      url: t.url || ''
+    })),
+    myVote: mine ? Number(mine.vote) || 0 : 0,
+    reviewerVotes: reviewers.map(r => ({
+      id: String(r.id || r.login || ''),
+      vote: Number(r.vote) || 0
+    }))
+  };
+}
+
+async function _buildCfPrAttention(o, view, options = {}) {
+  const F = forge(o);
+  const key = _cfWtKey(o);
+  const me = await F.getCurrentUser(o.org);
+  const [pr, threads, commits] = await Promise.all([
+    F.getPullRequest(o.org, o.project, o.repo, o.prId),
+    F.getPrThreads(o.org, o.project, o.repo, o.prId),
+    F.getPrCommits(o.org, o.project, o.repo, o.prId)
+  ]);
+  const current = _cfAttentionSnapshot(pr, threads, commits, me && me.id);
+  let checkpoint = loadCodeflowCheckpoints()[key] || null;
+  let automaticCheckpoint = null;
+
+  // Merely discovering a PR is enough to establish its starting point. The user
+  // should only need the manual control when deciding an ambiguous set of changes
+  // has been reviewed, not to turn tracking on in the first place.
+  if (!checkpoint && options.auto !== false) {
+    checkpoint = _saveCodeflowCheckpoint(key, current, 'first-observed', true);
+    automaticCheckpoint = { reason: 'first-observed', at: checkpoint.checkpointedAt };
+  }
+
+  const previousCommitIds = new Set((checkpoint && checkpoint.commitIds) || []);
+  const newCommits = checkpoint ? commits.filter(c => !previousCommitIds.has(c.id)) : [];
+  const previousThreads = new Map(((checkpoint && checkpoint.threads) || []).map(t => [String(t.id), t]));
+  const currentThreads = new Map((threads.items || []).map(t => [String(t.id), t]));
+  const viewer = String((me && me.id) || '').toLowerCase();
+  const authorView = view === 'mine';
+  const relevantThread = t =>
+    authorView || String(t.rootAuthorId || '').toLowerCase() === viewer;
+  let newComments = 0;
+  const changedThreads = [];
+  if (checkpoint) {
+    for (const t of (threads.items || [])) {
+      if (!relevantThread(t)) continue;
+      const old = previousThreads.get(String(t.id));
+      const delta = old
+        ? Math.max(0, (Number(t.commentCount) || 0) - (Number(old.commentCount) || 0))
+        : (Number(t.commentCount) || 0);
+      if (delta > 0) {
+        newComments += delta;
+        changedThreads.push({ ...t, newComments: delta });
+      }
+    }
+  }
+
+  const relevant = t => t.active &&
+    relevantThread(t);
+  const relevantPrior = ((checkpoint && checkpoint.threads) || []).filter(t =>
+    t.active && (authorView || String(t.rootAuthorId || '').toLowerCase() === viewer));
+  const addressedThreads = checkpoint ? relevantPrior.map(t => {
+    const now = currentThreads.get(String(t.id));
+    return (!now || !now.active) ? (now || t) : null;
+  }).filter(Boolean) : [];
+  const addressed = addressedThreads.length;
+  const awaitingConfirmation = checkpoint ? relevantPrior.filter(t => {
+    const now = currentThreads.get(String(t.id));
+    return now && now.active &&
+      (Number(now.commentCount) || 0) > (Number(t.commentCount) || 0) &&
+      String(now.lastAuthorId || '').toLowerCase() !== viewer;
+  }).length : 0;
+  const activeThreads = (threads.items || []).filter(relevant)
+    .sort((a, b) => String(b.lastCommentAt || '').localeCompare(String(a.lastCommentAt || '')));
+
+  const reviewers = Array.isArray(pr.reviewers) ? pr.reviewers : [];
+  const mine = reviewers.find(r => String(r.id || r.login || '').toLowerCase() === viewer);
+  const myVote = mine ? Number(mine.vote) || 0 : 0;
+  const approvalChangedAfterReview = !!(
+    mine && myVote > 0 && mine.reviewedCommitId &&
+    mine.reviewedCommitId !== current.sourceHead
+  );
+  const requiresReapproval = !!(
+    checkpoint && checkpoint.myVote > 0 && myVote <= 0 && newCommits.length
+  );
+  const oldVotes = new Map(((checkpoint && checkpoint.reviewerVotes) || [])
+    .map(r => [String(r.id).toLowerCase(), Number(r.vote) || 0]));
+  const approvalsDropped = checkpoint ? reviewers.filter(r => {
+    const id = String(r.id || r.login || '').toLowerCase();
+    return (oldVotes.get(id) || 0) > 0 && (Number(r.vote) || 0) <= 0;
+  }).length : 0;
+  const approvalsOutdated = reviewers.filter(r =>
+    Number(r.vote) > 0 && r.reviewedCommitId &&
+    r.reviewedCommitId !== current.sourceHead).length;
+
+  // A newly-recorded approval is an unambiguous "I reviewed this head" action.
+  // Advance automatically; passive actions such as opening the PR never erase
+  // deltas and still require the explicit Mark caught up control.
+  const approvalRecorded = !!(
+    checkpoint && options.auto !== false && myVote > 0 &&
+    (
+      (checkpoint.myVote <= 0 &&
+        (!mine || !mine.reviewedCommitId || mine.reviewedCommitId === current.sourceHead)) ||
+      (mine && mine.reviewedCommitId === current.sourceHead &&
+        checkpoint.sourceHead !== current.sourceHead)
+    )
+  );
+  if (approvalRecorded) {
+    const saved = _saveCodeflowCheckpoint(key, current, 'approval-recorded', true);
+    const after = await _buildCfPrAttention(o, view, { auto: false });
+    after.tracking = { automatic: true, reason: 'approval-recorded', at: saved.checkpointedAt };
+    return after;
+  }
+
+  let changedFiles = [];
+  let changedFilesError = '';
+  if (checkpoint && checkpoint.sourceHead && current.sourceHead &&
+      checkpoint.sourceHead !== current.sourceHead) {
+    try {
+      changedFiles = await F.getChangedFilesBetween(
+        o.org, o.project, o.repo, checkpoint.sourceHead, current.sourceHead, 300);
+    } catch (e) {
+      changedFilesError = e.message || 'Could not compare changed files.';
+    }
+  }
+
+  let worktree = null;
+  const rec = _getCfWt(key);
+  if (rec) {
+    const dir = _cfUsableDir(rec) || rec.worktreePath;
+    let changeCount = 0;
+    let changeError = '';
+    try {
+      if (dir && fs.existsSync(dir)) {
+        changeCount = (devitems.worktreeChanges(dir).changed || []).length;
+      }
+    } catch (e) {
+      changeError = e.message || 'Could not inspect local changes.';
+    }
+    worktree = {
+      status: rec.worktreeStatus || '',
+      path: dir || rec.worktreePath || '',
+      drift: rec.drift || null,
+      changeCount,
+      changeError
+    };
+  }
+
+  let verdict = {
+    tone: 'success',
+    title: automaticCheckpoint ? 'Tracking started automatically' : 'You are caught up',
+    body: automaticCheckpoint
+      ? 'Future commits, comments, approvals, and thread resolution will be measured from this first observation.'
+      : 'No new commits or comments since your checkpoint.'
+  };
+  if (requiresReapproval) {
+    verdict = {
+      tone: 'danger',
+      title: 'Review is required again',
+      body: `${newCommits.length} new ${newCommits.length === 1 ? 'commit has' : 'commits have'} arrived since your approval was recorded.`
+    };
+  } else if (!authorView && (approvalChangedAfterReview || newCommits.length)) {
+    verdict = {
+      tone: 'warning',
+      title: 'New changes need your attention',
+      body: `${newCommits.length} new ${newCommits.length === 1 ? 'commit' : 'commits'} since your checkpoint${approvalChangedAfterReview ? ' and your approval predates the current head' : ''}.`
+    };
+  } else if (authorView && (approvalsDropped || approvalsOutdated)) {
+    verdict = {
+      tone: 'warning',
+      title: 'Approval needs attention',
+      body: approvalsDropped
+        ? `${approvalsDropped} approval ${approvalsDropped === 1 ? 'was' : 'were'} reset after new changes.`
+        : `${approvalsOutdated} approval ${approvalsOutdated === 1 ? 'predates' : 'predate'} the current head.`
+    };
+  } else if (newComments || activeThreads.length) {
+    verdict = {
+      tone: activeThreads.length ? 'warning' : 'neutral',
+      title: activeThreads.length ? 'Feedback is open' : 'New discussion activity',
+      body: activeThreads.length
+        ? `${activeThreads.length} relevant feedback ${activeThreads.length === 1 ? 'thread is' : 'threads are'} still active.`
+        : `${newComments} new ${newComments === 1 ? 'comment' : 'comments'} since your checkpoint.`
+    };
+  }
+
+  return {
+    key,
+    checkpoint,
+    current,
+    verdict,
+    tracking: automaticCheckpoint
+      ? { automatic: true, ...automaticCheckpoint }
+      : { automatic: !!(checkpoint && checkpoint.automatic), reason: checkpoint && checkpoint.reason, at: checkpoint && checkpoint.checkpointedAt },
+    deltas: {
+      commits: newCommits.length,
+      comments: newComments,
+      threads: changedThreads.length,
+      files: changedFiles.length,
+      addressed,
+      awaitingConfirmation,
+      activeFeedback: activeThreads.length
+    },
+    newCommits: newCommits.slice(-20).reverse(),
+    changedThreads: changedThreads
+      .sort((a, b) => String(b.lastCommentAt || '').localeCompare(String(a.lastCommentAt || '')))
+      .slice(0, 20),
+    activeThreads: activeThreads.slice(0, 20),
+    addressedThreads: addressedThreads.slice(0, 20),
+    changedFiles: changedFiles.slice(0, 300),
+    changedFilesError,
+    approval: {
+      myVote,
+      requiresReapproval,
+      changedAfterReview: approvalChangedAfterReview,
+      approvalsDropped,
+      approvalsOutdated
+    },
+    comments: {
+      resolutionUnknown: !!threads.resolutionUnknown,
+      active: threads.activeComments || 0,
+      resolved: threads.resolvedComments || 0
+    },
+    worktree
+  };
+}
+
+app.get('/api/codeflow/pr/attention', async (req, res) => {
+  const o = {
+    org: req.query.org,
+    project: req.query.project,
+    repo: req.query.repo,
+    prId: req.query.prId,
+    provider: req.query.provider
+  };
+  if (!_cfPrOk(o)) return res.status(400).json({ error: 'org, repo and prId are required' });
+  try {
+    res.json({ attention: await _buildCfPrAttention(o, req.query.view || '') });
+  } catch (e) {
+    res.status(502).json({ error: e.message || 'Could not load PR activity' });
+  }
+});
+
+app.post('/api/codeflow/pr/attention/checkpoint', async (req, res) => {
+  const o = {
+    org: req.body.org,
+    project: req.body.project,
+    repo: req.body.repo,
+    prId: req.body.prId,
+    provider: req.body.provider
+  };
+  if (!_cfPrOk(o)) return res.status(400).json({ error: 'org, repo and prId are required' });
+  try {
+    const before = await _buildCfPrAttention(o, req.body.view || '', { auto: false });
+    _saveCodeflowCheckpoint(before.key, before.current, 'manual', false);
+    res.json({ attention: await _buildCfPrAttention(o, req.body.view || '', { auto: false }) });
+  } catch (e) {
+    res.status(502).json({ error: e.message || 'Could not save PR checkpoint' });
+  }
+});
 
 // All review-worktree records (for frontend hydration). Returns an array.
 // Opportunistically refreshes each record's prStatus from AzDO (throttled) so a
