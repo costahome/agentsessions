@@ -65,9 +65,8 @@ const upload = multer({ dest: path.join(require('os').tmpdir(), 'agent-superviso
 
 // Default to the well-known 3847 so browser users keep their bookmark. The
 // desktop shell pins PORT to a stable app port (3848) so the WebView origin —
-// and every localStorage-backed preference — survives restarts/upgrades; if
-// that port is busy the sidecar retries then falls back to an ephemeral port
-// (see bindPort below). Set PORT=0 to force an OS-assigned port. The
+// and every localStorage-backed preference — survives restarts/upgrades. Set
+// PORT=0 to force an OS-assigned port. The
 // actually-bound port is resolved after listen() into RESOLVED_PORT.
 const PORT = (process.env.PORT !== undefined && process.env.PORT !== '')
   ? Number(process.env.PORT)
@@ -422,12 +421,14 @@ function _reconcileStaleReviews() {
     // elapsed after the configured model timeout plus ten minutes of overhead.
     if (r.reviewStatus === 'reviewing') {
       const started = Date.parse(r.reviewStartedAt || r.updatedAt || '') || 0;
-      const configuredMs = Number(r.reviewTimeoutMinutes) > 0
-        ? Math.min(120, Math.max(5, Number(r.reviewTimeoutMinutes))) * 60 * 1000
+      const configuredMs = Number(r.reviewHardTimeoutMinutes || r.reviewTimeoutMinutes) > 0
+        ? Math.min(120, Math.max(5, Number(r.reviewHardTimeoutMinutes || r.reviewTimeoutMinutes))) * 60 * 1000
         : CF_REVIEW_MAX_MS;
       const liveReview = _cfActiveReviews.get(k);
       const wasLive = !!liveReview;
-      const exceededDeadline = !!(wasLive && started && now - started > configuredMs + 10 * 60 * 1000);
+      const hardDeadline = Number(liveReview && liveReview.hardDeadlineAt) ||
+        (started ? started + configuredMs : 0);
+      const exceededDeadline = !!(wasLive && hardDeadline && now > hardDeadline + 10 * 60 * 1000);
       const orphaned = !wasLive || exceededDeadline;
       if (orphaned) {
         if (exceededDeadline) {
@@ -2093,6 +2094,328 @@ app.post('/api/azdo/connect', express.json(), async (req, res) => {
   } catch (e) {
     res.status(500).json({ error: (e && e.message) || 'Azure sign-in failed.' });
   }
+});
+
+// ---- AzDo.AI: sprint commitments, capacity, OOF and progress signals -------
+
+const AZDO_AI_CONFIG = {
+  org: 'dnceng',
+  project: 'internal',
+  team: 'Dotnet-Core-Engineering',
+  areaPath: 'internal\\.NET Engineering Services',
+  queryId: '04fa22d9-8acb-4d23-93aa-51379d0e1410'
+};
+const AZDO_AI_PATH = dataPath('azdo-ai.json');
+const AZDO_AI_CALENDAR_PATH = dataPath('azdo-ai-calendar-oof.json');
+let _azdoAiRefresh = null;
+
+function _azdoAiRead(pathName, fallback) {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(pathName, 'utf8'));
+    return parsed && typeof parsed === 'object' ? parsed : fallback;
+  } catch { return fallback; }
+}
+function _azdoAiWrite(pathName, value) {
+  fs.mkdirSync(path.dirname(pathName), { recursive: true });
+  const tmp = `${pathName}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(value, null, 2));
+  fs.renameSync(tmp, pathName);
+}
+function _azdoAiDay(value) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? '' : date.toISOString().slice(0, 10);
+}
+function _azdoAiWorkingDays(start, end) {
+  const lo = new Date(`${String(start || '').slice(0, 10)}T00:00:00`);
+  const hi = new Date(`${String(end || '').slice(0, 10)}T00:00:00`);
+  if (Number.isNaN(lo.getTime()) || Number.isNaN(hi.getTime()) || hi < lo) return 0;
+  let count = 0;
+  for (const day = new Date(lo); day <= hi; day.setDate(day.getDate() + 1)) {
+    if (day.getDay() !== 0 && day.getDay() !== 6) count++;
+  }
+  return count;
+}
+function _azdoAiDaysSince(value) {
+  const at = Date.parse(value || '');
+  return at ? Math.max(0, Math.floor((Date.now() - at) / 86400000)) : 999;
+}
+function _azdoAiIterationKind(pathValue, current, next) {
+  const pathText = String(pathValue || '').toLowerCase();
+  if (current && pathText === String(current.path || '').toLowerCase()) return 'current';
+  if (next && pathText === String(next.path || '').toLowerCase()) return 'next';
+  if (pathText.includes('future consideration')) return 'future';
+  return 'other';
+}
+function _azdoAiIdentityKey(person) {
+  return String(person && (person.id || person.email || person.name) || '').trim().toLowerCase();
+}
+function _azdoAiCalendarCache() {
+  return _azdoAiRead(AZDO_AI_CALENDAR_PATH, { fetchedAt: '', items: [], error: '' });
+}
+async function _azdoAiGatherCalendarOof(startDate, finishDate, people) {
+  const names = (people || []).map(person => person && person.name).filter(Boolean).slice(0, 30);
+  const start = `${String(startDate).slice(0, 10)}T00:00:00`;
+  const end = `${String(finishDate).slice(0, 10)}T23:59:59`;
+  const path = `/me/calendarView?startDateTime=${encodeURIComponent(start)}&endDateTime=${encodeURIComponent(end)}` +
+    '&$select=id,subject,start,end,isAllDay,showAs,organizer,attendees,webLink&$top=250';
+  const results = await _meetingsWorkIqFetch([path], 120000);
+  const events = results.flatMap(_meetingsGraphValues);
+  const oofPattern = /\b(oof|out\s+of\s+office|pto|vacation|holiday|sick|leave)\b/i;
+  const seen = new Set();
+  return events.filter(event => oofPattern.test(String(event && event.subject || ''))).map(event => {
+    const subject = String(event.subject || '').trim();
+    const lowerSubject = subject.toLowerCase();
+    let person = names.find(name => {
+      const parts = String(name).toLowerCase().split(/\s+/).filter(Boolean);
+      return parts.some(part => part.length >= 4 && (lowerSubject.includes(part) ||
+        lowerSubject.split(/\W+/).some(token => token.length >= 4 && part.startsWith(token))));
+    }) || '';
+    if (!person) {
+      const beforeSignal = subject.split(oofPattern)[0].replace(/[()[\]\d/._-]+/g, ' ').trim();
+      person = beforeSignal || String(event.organizer && (event.organizer.emailAddress && event.organizer.emailAddress.name) || '');
+    }
+    const startDay = String(event.start && event.start.dateTime || '').slice(0, 10);
+    let endDay = String(event.end && event.end.dateTime || event.start && event.start.dateTime || '').slice(0, 10);
+    if (event.isAllDay && endDay > startDay) {
+      const exclusiveEnd = new Date(`${endDay}T00:00:00Z`);
+      exclusiveEnd.setUTCDate(exclusiveEnd.getUTCDate() - 1);
+      endDay = exclusiveEnd.toISOString().slice(0, 10);
+    }
+    const normalized = {
+      person: String(person || 'Unknown').trim().slice(0, 160),
+      start: startDay,
+      end: endDay,
+      subject: subject.slice(0, 240) || 'Out of office',
+      source: 'calendar',
+      webLink: String(event.webLink || '').slice(0, 1200)
+    };
+    const key = `${normalized.person.toLowerCase()}|${normalized.start}|${normalized.end}|${normalized.subject.toLowerCase()}`;
+    if (!normalized.person || !normalized.start || seen.has(key)) return null;
+    seen.add(key);
+    return normalized;
+  }).filter(Boolean);
+}
+function _azdoAiStartCalendarRefresh(startDate, finishDate, people) {
+  if (_azdoAiRefresh) return _azdoAiRefresh;
+  _azdoAiRefresh = _azdoAiGatherCalendarOof(startDate, finishDate, people)
+    .then(items => {
+      const next = { fetchedAt: new Date().toISOString(), items, error: '' };
+      _azdoAiWrite(AZDO_AI_CALENDAR_PATH, next);
+      return next;
+    })
+    .catch(error => {
+      const prior = _azdoAiCalendarCache();
+      const next = { ...prior, fetchedAt: new Date().toISOString(), error: error && error.message || 'Could not read calendar OOF.' };
+      _azdoAiWrite(AZDO_AI_CALENDAR_PATH, next);
+      return next;
+    })
+    .finally(() => { _azdoAiRefresh = null; });
+  return _azdoAiRefresh;
+}
+function _azdoAiMergeOof(capacities, calendarItems) {
+  const out = [];
+  const byPersonAndDates = new Map();
+  for (const row of capacities || []) {
+    for (const day of row.daysOff || []) {
+      const item = {
+        person: row.person && row.person.name || 'Unknown',
+        start: _azdoAiDay(day.start),
+        end: _azdoAiDay(day.end || day.start),
+        subject: 'Azure DevOps capacity day off',
+        source: 'capacity',
+        webLink: ''
+      };
+      const key = `${item.person.toLowerCase()}|${item.start}|${item.end}`;
+      if (item.start && !byPersonAndDates.has(key)) {
+        byPersonAndDates.set(key, item);
+        out.push(item);
+      }
+    }
+  }
+  for (const item of calendarItems || []) {
+    const key = `${String(item.person).toLowerCase()}|${item.start}|${item.end}`;
+    const existing = byPersonAndDates.get(key);
+    if (existing) {
+      existing.source = 'capacity + calendar';
+      existing.subject = item.subject || existing.subject;
+      existing.webLink = item.webLink || existing.webLink;
+    } else {
+      byPersonAndDates.set(key, item);
+      out.push(item);
+    }
+  }
+  return out.sort((a, b) => String(a.start).localeCompare(String(b.start)) || String(a.person).localeCompare(String(b.person)));
+}
+function _azdoAiSnapshotItem(item) {
+  return {
+    id: item.id,
+    iterationPath: item.iterationPath || '',
+    assignedTo: item.assignedTo && item.assignedTo.name || '',
+    effort: item.effort || item.remainingWork || 0,
+    state: item.state || '',
+    changedDate: item.changedDate || ''
+  };
+}
+async function _azdoAiBuild() {
+  const config = AZDO_AI_CONFIG;
+  const [teamIterations, iterationTree, rawItems, me] = await Promise.all([
+    azdo.getTeamIterations(config.org, config.project, config.team),
+    azdo.getIterationTree(config.org, config.project, 6),
+    azdo.queryStoredWorkItems(config.org, config.project, config.queryId, 500),
+    azdo.getCurrentUser(config.org)
+  ]);
+  const iterationMap = new Map();
+  for (const item of [...iterationTree, ...teamIterations]) {
+    const key = String(item.path || '').toLowerCase();
+    if (!key) continue;
+    iterationMap.set(key, { ...(iterationMap.get(key) || {}), ...item });
+  }
+  const iterations = [...iterationMap.values()].filter(item =>
+    String(item.path || '').toLowerCase().startsWith(config.areaPath.toLowerCase())
+  );
+  const sortedIterations = iterations.slice().sort((a, b) => String(a.startDate || '').localeCompare(String(b.startDate || '')));
+  const current = sortedIterations.find(item => item.timeFrame === 'current') ||
+    sortedIterations.find(item => String(item.path).toLowerCase().endsWith('\\sprint 1')) ||
+    sortedIterations[0] || null;
+  const currentIndex = current ? sortedIterations.findIndex(item => item.id === current.id) : -1;
+  const next = currentIndex >= 0 ? (sortedIterations.slice(currentIndex + 1).find(item => !/future consideration/i.test(item.path)) || null) : null;
+  const future = sortedIterations.find(item => /future consideration/i.test(item.path)) || null;
+  const capacities = current ? await azdo.getTeamIterationCapacities(config.org, config.project, config.team, current.id).catch(() => []) : [];
+  const store = _azdoAiRead(AZDO_AI_PATH, { snapshots: [], checkins: {} });
+  const prior = (store.snapshots || []).slice().reverse().find(snapshot => snapshot.iterationPath === (current && current.path)) || null;
+  const baseline = (store.snapshots || []).find(snapshot => snapshot.iterationPath === (current && current.path)) || null;
+  const priorById = new Map((prior && prior.items || []).map(item => [String(item.id), item]));
+  const baselineById = new Map((baseline && baseline.items || []).map(item => [String(item.id), item]));
+  const capacityByPerson = new Map();
+  const sprintDays = _azdoAiWorkingDays(current && current.startDate, current && current.finishDate);
+  for (const row of capacities) {
+    const key = _azdoAiIdentityKey(row.person);
+    const availableDays = Math.max(0, sprintDays - (row.daysOff || []).reduce((sum, day) =>
+      sum + _azdoAiWorkingDays(day.start, day.end || day.start), 0));
+    const capacityPerDay = (row.activities || []).reduce((sum, activity) => sum + (Number(activity.capacityPerDay) || 0), 0);
+    capacityByPerson.set(key, { ...row, availableDays, capacity: availableDays * (capacityPerDay || 1), committed: 0 });
+  }
+  const meKeys = new Set([me.id, me.email, me.name].map(value => String(value || '').toLowerCase()).filter(Boolean));
+  const now = new Date();
+  const items = rawItems.map(item => {
+    const personKey = _azdoAiIdentityKey(item.assignedTo);
+    const kind = _azdoAiIterationKind(item.iterationPath, current, next);
+    const checkin = store.checkins && store.checkins[String(item.id)] || null;
+    const previous = priorById.get(String(item.id));
+    const planned = baselineById.get(String(item.id));
+    const changes = [];
+    if (previous && previous.assignedTo !== (item.assignedTo && item.assignedTo.name || '')) changes.push('owner');
+    if (previous && previous.iterationPath !== item.iterationPath) changes.push('iteration');
+    if (previous && Number(previous.effort || 0) !== Number(item.effort || item.remainingWork || 0)) changes.push('estimate');
+    if (previous && previous.state !== item.state) changes.push('state');
+    const addedAfterPlanning = !!(baseline && !planned && kind === 'current');
+    const carried = kind === 'current' && !!current && !!item.createdDate &&
+      new Date(item.createdDate) < new Date(current.startDate);
+    const staleDays = _azdoAiDaysSince(checkin && checkin.at || item.changedDate);
+    const blocked = /blocked|impeded/i.test(`${item.state} ${item.tags}`);
+    const isMine = meKeys.has(personKey) || meKeys.has(String(item.assignedTo && item.assignedTo.name || '').toLowerCase());
+    const checkedInToday = _azdoAiDay(checkin && checkin.at) === _azdoAiDay(now);
+    let riskScore = 0;
+    if (blocked) riskScore += 5;
+    if (staleDays >= 3) riskScore += 2;
+    if (staleDays >= 7) riskScore += 2;
+    if (carried) riskScore += 2;
+    if (addedAfterPlanning) riskScore += 1;
+    const effort = item.remainingWork || item.effort || 1;
+    const cap = capacityByPerson.get(personKey);
+    if (cap && kind === 'current') cap.committed += effort;
+    return {
+      ...item,
+      iterationKind: kind,
+      isMine,
+      effortValue: effort,
+      checkin,
+      staleDays,
+      needsUpdate: isMine && kind === 'current' && !checkedInToday && !/closed|done|removed/i.test(item.state),
+      blocked,
+      carried,
+      addedAfterPlanning,
+      changes,
+      riskScore,
+      confidence: checkin && checkin.confidence || (riskScore >= 5 ? 'at-risk' : riskScore >= 2 ? 'watch' : 'on-track')
+    };
+  });
+  const team = [...capacityByPerson.values()].map(row => {
+    const allocation = row.capacity > 0 ? Math.round(row.committed / row.capacity * 100) : 0;
+    return { ...row, allocation };
+  }).sort((a, b) => b.allocation - a.allocation);
+  const snapshot = {
+    at: new Date().toISOString(),
+    iterationPath: current && current.path || '',
+    items: items.map(_azdoAiSnapshotItem)
+  };
+  const priorSnapshotJson = prior ? JSON.stringify(prior.items || []) : '';
+  if (!prior || prior.iterationPath !== snapshot.iterationPath || priorSnapshotJson !== JSON.stringify(snapshot.items)) {
+    store.snapshots = [...(store.snapshots || []), snapshot].slice(-45);
+    _azdoAiWrite(AZDO_AI_PATH, store);
+  }
+  const calendar = _azdoAiCalendarCache();
+  const startDate = _azdoAiDay(current && current.startDate) || _azdoAiDay(now);
+  const finishDate = _azdoAiDay(next && next.finishDate || current && current.finishDate) || _azdoAiDay(new Date(now.getTime() + 21 * 86400000));
+  if (!calendar.fetchedAt || Date.now() - Date.parse(calendar.fetchedAt) > 6 * 60 * 60 * 1000) {
+    _azdoAiStartCalendarRefresh(startDate, finishDate, team.map(row => row.person));
+  }
+  return {
+    config,
+    fetchedAt: new Date().toISOString(),
+    me,
+    iterations: { current, next, future, all: sortedIterations },
+    links: {
+      board: `https://dev.azure.com/${config.org}/${config.project}/_sprints/taskboard/${config.team}/${encodeURIComponent(current && current.path || config.areaPath)}`,
+      query: `https://dev.azure.com/${config.org}/${config.project}/_queries/query/${config.queryId}/`,
+      capacity: `https://dev.azure.com/${config.org}/${config.project}/_sprints/capacity/${config.team}/${encodeURIComponent(current && current.path || config.areaPath)}`
+    },
+    items,
+    team,
+    oof: _azdoAiMergeOof(capacities, calendar.items),
+    calendar: { fetchedAt: calendar.fetchedAt, refreshing: !!_azdoAiRefresh, error: calendar.error || '' },
+    summary: {
+      mineCommitted: items.filter(item => item.isMine && item.iterationKind === 'current').length,
+      atRisk: items.filter(item => item.iterationKind === 'current' && item.riskScore >= 3).length,
+      carried: items.filter(item => item.iterationKind === 'current' && item.carried).length,
+      addedAfterPlanning: items.filter(item => item.iterationKind === 'current' && item.addedAfterPlanning).length,
+      needsUpdate: items.filter(item => item.needsUpdate).length,
+      changed: items.filter(item => item.changes.length).length
+    }
+  };
+}
+
+app.get('/api/azdo-ai', async (req, res) => {
+  try { res.json(await _azdoAiBuild()); }
+  catch (error) { res.status(502).json({ error: error && error.message || 'Could not load AzDo.AI.' }); }
+});
+app.post('/api/azdo-ai/oof/refresh', express.json(), async (req, res) => {
+  try {
+    const data = await _azdoAiBuild();
+    const current = data.iterations.current;
+    const next = data.iterations.next;
+    const refreshed = await _azdoAiStartCalendarRefresh(
+      _azdoAiDay(current && current.startDate),
+      _azdoAiDay(next && next.finishDate || current && current.finishDate),
+      data.team.map(row => row.person)
+    );
+    res.json({ ok: true, calendar: refreshed, oof: _azdoAiMergeOof(data.team, refreshed.items) });
+  } catch (error) { res.status(502).json({ error: error && error.message || 'Could not refresh calendar OOF.' }); }
+});
+app.post('/api/azdo-ai/checkin', express.json(), (req, res) => {
+  const id = Number(req.body && req.body.id);
+  if (!Number.isFinite(id) || id <= 0) return res.status(400).json({ error: 'A work item id is required.' });
+  const confidence = String(req.body && req.body.confidence || '').toLowerCase();
+  if (!['on-track', 'watch', 'at-risk'].includes(confidence)) return res.status(400).json({ error: 'Choose on-track, watch, or at-risk.' });
+  const note = String(req.body && req.body.note || '').trim().slice(0, 2000);
+  const store = _azdoAiRead(AZDO_AI_PATH, { snapshots: [], checkins: {} });
+  store.checkins = store.checkins || {};
+  const prior = store.checkins[String(id)] || {};
+  const history = Array.isArray(prior.history) ? prior.history.slice(-19) : [];
+  const entry = { at: new Date().toISOString(), confidence, note };
+  store.checkins[String(id)] = { ...entry, history: [...history, entry] };
+  _azdoAiWrite(AZDO_AI_PATH, store);
+  res.json({ ok: true, checkin: store.checkins[String(id)] });
 });
 
 // ---- Azure DevOps git: discover + install agents/plugins from a repo --------
@@ -5204,6 +5527,27 @@ app.post('/api/dev-buddy/actions/work-item', async (req, res) => {
   }
 });
 
+app.post('/api/dev-buddy/actions/dnceng-task', async (req, res) => {
+  try {
+    const title = String(req.body && req.body.title || '').trim().slice(0, 250);
+    if (!title) return res.status(400).json({ error: 'title is required' });
+    const me = await azdo.getCurrentUser('dnceng');
+    const assignedTo = String(me.email || me.name || '').trim();
+    if (!assignedTo) return res.status(502).json({ error: 'Could not resolve your Azure DevOps identity.' });
+    const description = String(req.body && req.body.detail || '').trim().slice(0, 3000);
+    const created = await azdo.createWorkItem('dnceng', 'internal', 'Task', {
+      title,
+      description,
+      assignedTo,
+      areaPath: 'internal\\.NET Engineering Services',
+      iterationPath: 'internal\\.NET Engineering Services',
+    });
+    res.status(201).json({ ok: true, workItem: created });
+  } catch (error) {
+    res.status(500).json({ error: error.message || 'Could not create the DNCEng task.' });
+  }
+});
+
 app.post('/api/dev-buddy/items', (req, res) => {
   try {
     const item = devBuddy.addItem(req.body || {});
@@ -6705,6 +7049,12 @@ app.post('/api/codeflow/pr/review', async (req, res) => {
   const reasoningEffort = (settings.resolveReasoningEffort && settings.resolveReasoningEffort('execution', null)) || undefined;
   const configuredTimeout = Number(settings.getSettings().codeflowReviewTimeoutMinutes);
   const reviewTimeoutMinutes = Number.isFinite(configuredTimeout) ? Math.min(120, Math.max(5, configuredTimeout)) : 30;
+  const reviewHardTimeoutMinutes = Math.min(120, Math.max(reviewTimeoutMinutes + 30, reviewTimeoutMinutes * 2));
+  const reviewActivityGraceMinutes = Math.min(10, Math.max(5, Math.ceil(reviewTimeoutMinutes / 6)));
+  const reviewStartedAt = new Date().toISOString();
+  const reviewStartedMs = Date.parse(reviewStartedAt);
+  const reviewDeadlineMs = reviewStartedMs + reviewTimeoutMinutes * 60 * 1000;
+  const reviewHardDeadlineMs = reviewStartedMs + reviewHardTimeoutMinutes * 60 * 1000;
   const reviewAttemptId = require('crypto').randomUUID();
   const haveWt = !!(rec && rec.worktreeStatus === 'ready' && rec.worktreePath && fs.existsSync(rec.worktreePath));
   rec = _saveCfWt(key, {
@@ -6712,7 +7062,7 @@ app.post('/api/codeflow/pr/review', async (req, res) => {
     prTitle: pr.title || (rec && rec.prTitle) || '', prUrl: pr.url || (rec && rec.prUrl) || '',
     sourceBranch: pr.sourceBranch, targetBranch: pr.targetBranch || '',
     prStatus: String(pr.status || '').toLowerCase(),
-    reviewStatus: 'reviewing', reviewError: null, reviewStartedAt: new Date().toISOString(),
+    reviewStatus: 'reviewing', reviewError: null, reviewStartedAt,
     reviewPhase: haveWt ? 'context' : 'worktree',
     reviewProgress: haveWt ? 'Reading the pull request and linked context' : 'Creating an isolated review worktree',
     reviewActivity: [],
@@ -6731,10 +7081,19 @@ app.post('/api/codeflow/pr/review', async (req, res) => {
     reviewModel: model || 'Runtime default',
     reviewReasoningEffort: reasoningEffort || 'model default',
     reviewTimeoutMinutes,
+    reviewHardTimeoutMinutes,
+    reviewActivityGraceMinutes,
+    reviewLastActivityAt: reviewStartedAt,
+    reviewExtendedPastBase: false,
     ...(haveWt ? {} : { worktreeStatus: 'creating', error: null })
   });
   res.json({ ok: true, status: 'reviewing', key, worktree: { key, ...rec } });
-  const activeReview = { attemptId: reviewAttemptId, sessionId: null, cancelled: false };
+  const activeReview = {
+    attemptId: reviewAttemptId,
+    sessionId: null,
+    cancelled: false,
+    hardDeadlineAt: reviewHardDeadlineMs
+  };
   _cfActiveReviews.set(key, activeReview);
   (async () => {
     const ownsAttempt = () => _cfActiveReviews.get(key) === activeReview && !activeReview.cancelled &&
@@ -6742,6 +7101,28 @@ app.post('/api/codeflow/pr/review', async (req, res) => {
     const saveAttempt = (patch) => ownsAttempt() ? _saveCfWt(key, patch) : null;
     let lastProgressAt = 0;
     let responseStarted = false;
+    let lastReviewActivityAt = reviewStartedMs;
+    let reviewExtended = false;
+    let reviewTimeoutReason = '';
+    let reviewWatchdog = null;
+    let abortPending = false;
+    const markReviewActivity = () => {
+      lastReviewActivityAt = Date.now();
+    };
+    const remainingReviewTimeoutMs = () => Math.max(1000, reviewHardDeadlineMs - Date.now());
+    const applyReviewTimeout = (result) => {
+      const reason = reviewTimeoutReason ||
+        (Date.now() >= reviewHardDeadlineMs ? 'hard-cap' : '');
+      if (!reason) return result;
+      const message = reason === 'hard-cap'
+        ? `The review reached its ${reviewHardTimeoutMinutes}-minute absolute execution cap.`
+        : `The review had no tool or model activity for ${reviewActivityGraceMinutes} minutes after its initial ${reviewTimeoutMinutes}-minute window.`;
+      return Object.assign({}, result || {}, {
+        ok: false,
+        error: message,
+        completionReason: reason === 'hard-cap' ? 'hard-cap-timeout' : 'activity-timeout'
+      });
+    };
     const trace = (kind, label, detail, status, details) => {
       if (!ownsAttempt()) return;
       const now = Date.now();
@@ -6798,6 +7179,8 @@ app.post('/api/codeflow/pr/review', async (req, res) => {
     };
     const onStep = (step) => {
       if (!step) return;
+      markReviewActivity();
+      saveAttempt({ reviewLastActivityAt: new Date(lastReviewActivityAt).toISOString() });
       if (step.kind === 'tool_start') {
         if (step.toolCallId) toolInputs.set(step.toolCallId, { tool: step.tool || '', args: tracePayload(step.args) });
         trace('tool_start', 'Using ' + (step.tool || 'a repository tool'), 'Tool started.', '',
@@ -6848,8 +7231,6 @@ app.post('/api/codeflow/pr/review', async (req, res) => {
       const reportBefore = _cfReportFingerprint(wtPath);
       const commentsBefore = _cfArtifactFingerprint(wtPath, CODEFLOW_COMMENTS_NAME);
       saveAttempt({ reviewReportBaseline: reportBefore || null });
-      const reviewStartedMs = Date.parse((_getCfWt(key) || {}).reviewStartedAt || '') || Date.now();
-      const reviewDeadlineMs = reviewStartedMs + reviewTimeoutMinutes * 60 * 1000;
       const isFreshArtifact = (fingerprint, before) => !!fingerprint && (
         before
           ? fingerprint.sha !== before.sha || fingerprint.mtime > before.mtime + 1
@@ -6903,6 +7284,37 @@ app.post('/api/codeflow/pr/review', async (req, res) => {
         : 'Perform your COMPLETE code review of this pull request now. Work through every review step in order, then WRITE the self-contained HTML report `' + CODEFLOW_REPORT_NAME + '` AND the machine-readable findings file `' + CODEFLOW_COMMENTS_NAME + '` at the ROOT of this worktree (overwrite them if they exist). When both files are written and saved, reply with the single word DONE.';
       const sid = require('crypto').randomUUID();
       activeReview.sessionId = sid;
+      lastReviewActivityAt = Date.now();
+      reviewWatchdog = setInterval(() => {
+        if (!ownsAttempt() || reviewTimeoutReason || abortPending) return;
+        const now = Date.now();
+        const pastBaseWindow = now >= reviewDeadlineMs;
+        const activityIsFresh = now - lastReviewActivityAt < reviewActivityGraceMinutes * 60 * 1000;
+        if (pastBaseWindow && activityIsFresh && !reviewExtended) {
+          reviewExtended = true;
+          trace('phase', 'Active review extended beyond its initial window',
+            `Recent activity was detected. The review may continue up to the ${reviewHardTimeoutMinutes}-minute absolute cap.`);
+          saveAttempt({
+            reviewExtendedPastBase: true,
+            reviewProgressDetail: `Still active after ${reviewTimeoutMinutes} minutes; continuing while progress remains fresh.`
+          });
+        }
+        if (now < reviewHardDeadlineMs && (!pastBaseWindow || activityIsFresh)) return;
+        reviewTimeoutReason = now >= reviewHardDeadlineMs ? 'hard-cap' : 'inactive';
+        const detail = reviewTimeoutReason === 'hard-cap'
+          ? `Stopped at the ${reviewHardTimeoutMinutes}-minute absolute cap.`
+          : `No tool or model activity was received for ${reviewActivityGraceMinutes} minutes after the initial window.`;
+        trace('timeout', reviewTimeoutReason === 'hard-cap' ? 'Review reached its absolute cap' : 'Review became inactive',
+          detail, 'error');
+        saveAttempt({
+          reviewTimeoutKind: reviewTimeoutReason,
+          reviewTimeoutAt: new Date(now).toISOString(),
+          reviewProgress: reviewTimeoutReason === 'hard-cap' ? 'Review reached its absolute cap' : 'Review stopped after inactivity',
+          reviewProgressDetail: detail
+        });
+        abortPending = true;
+        sdkRunner.abortSession(activeReview.sessionId).catch(() => {}).finally(() => { abortPending = false; });
+      }, 2000);
       let acc = '';
       let run = null;
       if (preparationBlocked) {
@@ -6914,10 +7326,11 @@ app.post('/api/codeflow/pr/review', async (req, res) => {
           (model || 'Runtime default') + ' · ' + (reasoningEffort || 'model-default reasoning'), true);
         run = await sdkRunner.runAgent({
         config: { cwd: wtPath, agent: slug, allowAll: true },
-        prompt: kickoff, sessionId: sid, model, reasoningEffort, timeoutMs: reviewTimeoutMinutes * 60 * 1000,
+        prompt: kickoff, sessionId: sid, model, reasoningEffort, timeoutMs: remainingReviewTimeoutMs(),
         completionText: 'DONE',
         completionCheck: reportWritten,
         onChunk: (c) => {
+          markReviewActivity();
           acc += c;
           if (!responseStarted) {
             responseStarted = true;
@@ -6927,6 +7340,7 @@ app.post('/api/codeflow/pr/review', async (req, res) => {
         onStep,
         meta: { source: 'system', category: 'pull_requests' }
         });
+        run = applyReviewTimeout(run);
       }
       if (!ownsAttempt()) return;
       if (!preparationBlocked && (!run || run.fallback)) {
@@ -6941,10 +7355,11 @@ app.post('/api/codeflow/pr/review', async (req, res) => {
           prompt: body + '\n\n---\n\n' + kickoff, cwd: wtPath,
           sessionId: activeReview.sessionId, model, reasoningEffort,
           modelCategory: 'execution',
-          timeoutMs: reviewTimeoutMinutes * 60 * 1000,
+          timeoutMs: remainingReviewTimeoutMs(),
           completionText: 'DONE',
           completionCheck: reportWritten,
           onChunk: (c) => {
+            markReviewActivity();
             acc += c;
             if (!responseStarted) {
               responseStarted = true;
@@ -6954,6 +7369,11 @@ app.post('/api/codeflow/pr/review', async (req, res) => {
           onStep,
           meta: { source: 'system', category: 'pull_requests' }
         });
+        run = applyReviewTimeout(run);
+      }
+      if (reviewWatchdog) {
+        clearInterval(reviewWatchdog);
+        reviewWatchdog = null;
       }
       if (!ownsAttempt()) return;
       // 4. Inspect the artifact contract. If the model completed with a substantive
@@ -7069,6 +7489,9 @@ app.post('/api/codeflow/pr/review', async (req, res) => {
           recoveryNeeded ? '--- Automatic report recovery ---\n' + String((recoveryRun && recoveryRun.output) || recoveryAcc || '').trim() : ''
         ].filter(Boolean).join('\n\n').slice(-20000),
         reviewCompletionReason: (effectiveRun && effectiveRun.completionReason) || '',
+        reviewExtendedPastBase: reviewExtended,
+        reviewLastActivityAt: new Date(lastReviewActivityAt).toISOString(),
+        reviewTimeoutKind: reviewTimeoutReason || '',
         reviewRuntimeWarning: runtimeWarning,
         reviewRecoveryAttempted: recoveryNeeded,
         reviewRecoveryOutcome: recoveryNeeded ? (ok ? 'succeeded' : 'failed') : '',
@@ -7095,6 +7518,7 @@ app.post('/api/codeflow/pr/review', async (req, res) => {
         worktreeStatus: (_getCfWt(key) || {}).worktreeStatus === 'creating' ? 'error' : undefined
       });
     } finally {
+      if (reviewWatchdog) clearInterval(reviewWatchdog);
       if (_cfActiveReviews.get(key) === activeReview) _cfActiveReviews.delete(key);
     }
   })();
@@ -48623,11 +49047,10 @@ const onListen = () => {
 };
 // In sidecar (desktop) mode we prefer a STABLE port so the WebView origin — and
 // thus every localStorage-backed preference (theme, icon set, experience level,
-// basic features) — survives restarts and upgrades. A transient conflict during
-// a fast restart (prior sidecar still releasing the port) is retried briefly;
-// only then do we fall back to an ephemeral port so the window still opens
-// instead of hanging on the splash. Browser mode keeps the original behavior:
-// a port already in use means another instance is running, so we exit.
+// basic features, and customized navigation) — survives restarts and upgrades.
+// A transient conflict during a fast restart is retried briefly. We never fall
+// back to another port because doing so presents a blank preference store and
+// makes the user's navigation appear to have reset.
 const SIDECAR = process.env.SUPERVISOR_SIDECAR === '1';
 const MAX_BIND_RETRIES = 24; // ~6s at 250ms
 let server;
@@ -48656,7 +49079,7 @@ function bindOutlookAddinHttps() {
     console.error(`[supervisor] Outlook writing coach HTTPS setup failed: ${error.message}`);
   }
 }
-function bindPort(portToTry, allowFallback) {
+function bindPort(portToTry) {
   const s = HOST ? app.listen(portToTry, HOST, onListen) : app.listen(portToTry, onListen);
   server = s;
   s.on('error', (err) => {
@@ -48664,12 +49087,7 @@ function bindPort(portToTry, allowFallback) {
       try { s.close(); } catch { /* best effort */ }
       if (SIDECAR && portToTry !== 0 && _bindRetries < MAX_BIND_RETRIES) {
         _bindRetries++;
-        setTimeout(() => bindPort(portToTry, allowFallback), 250);
-        return;
-      }
-      if (SIDECAR && allowFallback && portToTry !== 0) {
-        console.log(`[supervisor] Port ${portToTry} busy after ${_bindRetries} retries — falling back to an ephemeral port (preferences may reset this session).`);
-        bindPort(0, false);
+        setTimeout(() => bindPort(portToTry), 250);
         return;
       }
       console.log(`[supervisor] Port ${portToTry} already in use — another instance is running. Exiting.`);
@@ -48678,7 +49096,7 @@ function bindPort(portToTry, allowFallback) {
     throw err;
   });
 }
-bindPort(PORT, SIDECAR);
+bindPort(PORT);
 bindOutlookAddinHttps();
 
 // Graceful shutdown — single path for every trigger so we always stop the
@@ -48720,18 +49138,15 @@ process.on('uncaughtException', (err) => {
   try { console.error('[supervisor] Uncaught exception — restarting:', err && err.stack ? err.stack : err); } catch { /* ignore */ }
   shutdown('uncaughtException', 1);
 });
-// When launched as a desktop sidecar (SUPERVISOR_SIDECAR=1) we resume stdin so
-// the OS pipe buffer can never fill and stall the parent — but we DO NOT treat
-// stdin end/close as a shutdown signal. The Rust supervisor blocks on
-// `child.wait()`, and Rust's std closes the child's stdin handle the instant
-// wait() is called (to avoid deadlock), so an stdin-close gate here fires on
-// EVERY normal spawn and kills the sidecar seconds after it prints __READY__ —
-// which stranded the desktop WebView on ERR_CONNECTION_REFUSED. Sidecar
-// lifecycle + orphan cleanup are owned by the Rust monitor (taskkill_tree on
-// respawn/exit), not by this stdin pipe. Gated so normal `npm start` is unaffected.
+// The Rust supervisor keeps the child's stdin pipe open while the desktop is
+// alive. If the desktop exits unexpectedly, Windows closes that pipe; treating
+// end/close as parent loss prevents an orphaned sidecar from retaining port 3848
+// and forcing the next desktop session onto a new localStorage origin.
 if (process.env.SUPERVISOR_SIDECAR === '1') {
   try {
     process.stdin.resume();
+    process.stdin.once('end', () => shutdown('desktop parent exited'));
+    process.stdin.once('close', () => shutdown('desktop parent pipe closed'));
     process.stdin.on('error', () => { /* ignore — never fatal */ });
   } catch { /* best effort */ }
 }

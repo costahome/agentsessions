@@ -369,8 +369,8 @@ function deriveMood(input = {}) {
   if (attention >= 3 || count(day.conflicts) > 0 || score >= 18) {
     return {
       id: 'overloaded',
-      label: 'Overloaded',
-      detail: 'A lot is competing for your attention.',
+      label: 'Busy',
+      detail: 'There is a lot to sort through, but I am keeping watch.',
       score,
     };
   }
@@ -384,9 +384,9 @@ function deriveMood(input = {}) {
   }
   if (attention > 0 || score >= 9) {
     return {
-      id: 'concerned',
-      label: 'Concerned',
-      detail: 'A few things need a closer look.',
+      id: 'attentive',
+      label: 'Heads-up',
+      detail: 'A few things could use your attention.',
       score,
     };
   }
@@ -400,8 +400,8 @@ function deriveMood(input = {}) {
   }
   return {
     id: 'calm',
-    label: 'Calm',
-    detail: 'Nothing urgent is pulling at you.',
+    label: 'Ready',
+    detail: 'I am here and keeping an eye on things.',
     score,
   };
 }

@@ -750,7 +750,7 @@ async function updateWorkItemState(org, project, id, state) {
 // "DNCEng Task", "Bug"); it is URL-appended after a literal "$". Optional fields
 // (description/assignedTo/areaPath/iterationPath/state/tags) are set via the
 // JSON-patch document. Returns the compact getWorkItem shape.
-async function createWorkItem(org, project, type, { title, description, assignedTo, areaPath, iterationPath, state, tags } = {}) {
+async function createWorkItem(org, project, type, { title, description, assignedTo, areaPath, iterationPath, state, tags, validateOnly = false } = {}) {
   if (!String(title || '').trim()) throw new Error('Work item title is required.');
   const patch = [{ op: 'add', path: '/fields/System.Title', value: String(title).slice(0, 250) }];
   if (description) patch.push({ op: 'add', path: '/fields/System.Description', value: String(description) });
@@ -762,7 +762,7 @@ async function createWorkItem(org, project, type, { title, description, assigned
   const wtype = encodeURIComponent('$' + String(type || 'Task').trim());
   const d = await apiSend(
     org,
-    `${seg(project)}/_apis/wit/workitems/${wtype}?api-version=${API_VERSION}`,
+    `${seg(project)}/_apis/wit/workitems/${wtype}?api-version=${API_VERSION}${validateOnly ? '&validateOnly=true' : ''}`,
     { method: 'POST', body: patch, contentType: 'application/json-patch+json' }
   );
   const f = d.fields || {};
@@ -1073,6 +1073,136 @@ async function queryWorkItems(org, project, { type, state, areaPath, assignedToM
       };
     })
     .sort((a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0));
+}
+
+// ---- AzDo.AI sprint planning --------------------------------------------
+
+function _workItemPerson(value) {
+  if (!value) return { name: '', id: '', email: '' };
+  if (typeof value === 'string') return { name: value, id: '', email: '' };
+  return {
+    name: value.displayName || value.uniqueName || '',
+    id: value.id || value.descriptor || '',
+    email: value.uniqueName || ''
+  };
+}
+
+async function getTeamIterations(org, project, team) {
+  const data = await apiSend(
+    org,
+    `${seg(project)}/${seg(team)}/_apis/work/teamsettings/iterations?api-version=${API_VERSION}`
+  );
+  return (data.value || []).map(iteration => ({
+    id: iteration.id || '',
+    name: iteration.name || '',
+    path: iteration.path || '',
+    startDate: iteration.attributes && iteration.attributes.startDate || '',
+    finishDate: iteration.attributes && iteration.attributes.finishDate || '',
+    timeFrame: iteration.attributes && iteration.attributes.timeFrame || ''
+  }));
+}
+
+async function getIterationTree(org, project, depth = 5) {
+  const data = await apiSend(
+    org,
+    `${seg(project)}/_apis/wit/classificationnodes/iterations?$depth=${Math.max(1, Math.min(10, Number(depth) || 5))}&api-version=${API_VERSION}`
+  );
+  const out = [];
+  const walk = node => {
+    if (!node || typeof node !== 'object') return;
+    const attributes = node.attributes || {};
+    let iterationPath = String(node.path || '').replace(/^\\+/, '');
+    const rootPrefix = `${project}\\Iteration`;
+    if (iterationPath.toLowerCase().startsWith(rootPrefix.toLowerCase())) {
+      iterationPath = project + iterationPath.slice(rootPrefix.length);
+    }
+    out.push({
+      id: node.identifier || node.id || '',
+      name: node.name || '',
+      path: iterationPath,
+      startDate: attributes.startDate || '',
+      finishDate: attributes.finishDate || '',
+      timeFrame: ''
+    });
+    for (const child of node.children || []) walk(child);
+  };
+  walk(data);
+  return out;
+}
+
+async function getTeamIterationCapacities(org, project, team, iterationId) {
+  if (!iterationId) return [];
+  const data = await apiSend(
+    org,
+    `${seg(project)}/${seg(team)}/_apis/work/teamsettings/iterations/${seg(iterationId)}/capacities?api-version=${API_VERSION}`
+  );
+  return (data.value || data.teamMembers || []).map(row => {
+    const person = _workItemPerson(row.teamMember);
+    return {
+      person,
+      activities: (row.activities || []).map(activity => ({
+        name: activity.name || '',
+        capacityPerDay: Number(activity.capacityPerDay) || 0
+      })),
+      daysOff: (row.daysOff || []).map(day => ({
+        start: day.start || '',
+        end: day.end || day.start || ''
+      }))
+    };
+  });
+}
+
+async function queryStoredWorkItems(org, project, queryId, top = 250) {
+  const query = await apiSend(
+    org,
+    `${seg(project)}/_apis/wit/wiql/${seg(queryId)}?api-version=${API_VERSION}`
+  );
+  const refs = [];
+  for (const item of (query.workItems || [])) if (item && item.id) refs.push(item.id);
+  for (const rel of (query.workItemRelations || [])) {
+    if (rel && rel.target && rel.target.id) refs.push(rel.target.id);
+  }
+  const ids = [...new Set(refs)].slice(0, Math.max(1, Math.min(500, Number(top) || 250)));
+  if (!ids.length) return [];
+  const batch = await apiSend(org, `${seg(project)}/_apis/wit/workitemsbatch?api-version=${API_VERSION}`, {
+    method: 'POST',
+    body: {
+      ids,
+      fields: [
+        'System.Id', 'System.Title', 'System.State', 'System.WorkItemType',
+        'System.AreaPath', 'System.IterationPath', 'System.Tags',
+        'System.ChangedDate', 'System.CreatedDate', 'System.AssignedTo',
+        'Microsoft.VSTS.Scheduling.Effort', 'Microsoft.VSTS.Scheduling.RemainingWork',
+        'Microsoft.VSTS.Scheduling.CompletedWork', 'Microsoft.VSTS.Common.Priority',
+        'Microsoft.VSTS.Common.ActivatedDate', 'Microsoft.VSTS.Common.ClosedDate'
+      ]
+    },
+    contentType: 'application/json'
+  });
+  const order = new Map(ids.map((id, index) => [id, index]));
+  return (batch.value || []).map(item => {
+    const fields = item.fields || {};
+    const assignedTo = _workItemPerson(fields['System.AssignedTo']);
+    return {
+      id: item.id,
+      title: fields['System.Title'] || '',
+      type: fields['System.WorkItemType'] || '',
+      state: fields['System.State'] || '',
+      areaPath: fields['System.AreaPath'] || '',
+      iterationPath: fields['System.IterationPath'] || '',
+      tags: fields['System.Tags'] || '',
+      changedDate: fields['System.ChangedDate'] || '',
+      createdDate: fields['System.CreatedDate'] || '',
+      activatedDate: fields['Microsoft.VSTS.Common.ActivatedDate'] || '',
+      closedDate: fields['Microsoft.VSTS.Common.ClosedDate'] || '',
+      effort: Number(fields['Microsoft.VSTS.Scheduling.Effort']) || 0,
+      remainingWork: Number(fields['Microsoft.VSTS.Scheduling.RemainingWork']) || 0,
+      completedWork: Number(fields['Microsoft.VSTS.Scheduling.CompletedWork']) || 0,
+      priority: Number(fields['Microsoft.VSTS.Common.Priority']) || 0,
+      assignedTo,
+      url: workItemUrl(org, project, item.id)
+    };
+  }).sort((a, b) => (order.get(a.id) || 0) - (order.get(b.id) || 0));
 }
 
 // Expand an epic's hierarchy: its direct child work items (Hierarchy-Forward
@@ -1573,6 +1703,10 @@ module.exports = {
   getPullRequest,
   getSignInStatus,
   listProjectPullRequests,
+  getTeamIterations,
+  getIterationTree,
+  getTeamIterationCapacities,
+  queryStoredWorkItems,
   listMyWorkItems,
   queryWorkItems,
   getEpicTree

@@ -81,6 +81,56 @@ await t.test('desktop: internal Code Flow PR links stay in the SPA', () => {
     'the primary dev-card PR action is no longer an external-link anchor');
 });
 
+await t.test('AzDo.AI: both themed sprint views, reminders, and calendar OOF are wired', () => {
+  const srv = readFileSync(SERVER, 'utf8');
+  const html = readFileSync(APP_HTML, 'utf8');
+  const azdo = readFileSync('azdo.js', 'utf8');
+  const basicVisibility = sliceSource(APP_HTML, 'basicRouteVisible(route) {', 'advancedRouteVisible(route) {');
+  const navDefaults = sliceSource(APP_HTML, '_navDefaultKeys(scope) {', '_reconcileNavLayout(scope) {');
+  const featureCatalogs = sliceSource(APP_HTML, 'basicFeatureCatalog() {', 'setExperienceLevel(level) {');
+  t.ok(/route === 'azdo-ai'/.test(html) &&
+       /Daily Sprint Brief/.test(html) &&
+       /Commitment Map/.test(html) &&
+       /\['home'[\s\S]*'azdo-ai'[\s\S]*\]\.includes\(first\)/.test(html),
+    'AzDo.AI exposes both approved experiences as a first-class SPA route');
+  t.ok(/var\(--cp-bg\)/.test(html) &&
+       /var\(--cp-surface\)/.test(html) &&
+       /var\(--cp-accent\)/.test(html),
+    'AzDo.AI follows the shared appearance tokens');
+  t.ok(/'azdo-ai'/.test(basicVisibility) &&
+       /key:\s*'azdo-ai'/.test(html) &&
+       /if \(en\('azdo-ai'\)\) out\.push\('azdo-ai'\)/.test(navDefaults) &&
+       (featureCatalogs.match(/key: 'azdo-ai'/g) || []).length === 2 &&
+       /nav-migration-azdo-ai-v1/.test(html) &&
+       /targetGroup\.children\.splice\(insertAt, 0, azdoNode\)/.test(html),
+    'AzDo.AI is discoverable and independently gateable in both Basic and Advanced');
+  t.ok(/\/api\/azdo-ai\/checkin/.test(html) &&
+       /needsUpdate/.test(html) &&
+       /azdo-ai-reminded/.test(html),
+    'daily progress check-ins and quiet reminders are present');
+  t.ok(/x-model="azdoAi\.stateFilter"/.test(html) &&
+       /value="in-progress">In progress/.test(html) &&
+       /azdoAiItemInProgress\(item\)/.test(html),
+    'work can be filtered by whether its Azure DevOps state is in progress');
+  t.ok(/azdoAiSetMetricFilter\('mine-committed'\)/.test(html) &&
+       /azdoAiSetMetricFilter\('at-risk'\)/.test(html) &&
+       /azdoAiSetMetricFilter\('carried'\)/.test(html) &&
+       /azdoAiSetMetricFilter\('added'\)/.test(html) &&
+       /azdoAi\.metricFilter === 'carried'/.test(html),
+    'summary cards toggle the exact work-item set represented by their counts');
+  t.ok(/\/api\/azdo-ai\/oof\/refresh/.test(srv) &&
+       /\/me\/calendarView/.test(srv) &&
+       /capacity \+ calendar/.test(srv) &&
+       /event\.isAllDay && endDay > startDay/.test(srv),
+    'OOF merges AzDO capacity with calendar events and normalizes exclusive all-day ends');
+  t.ok(/JSON\.stringify\(snapshot\.items\)/.test(srv),
+    'unchanged page refreshes do not create redundant sprint checkpoints');
+  t.ok(/data\.teamMembers/.test(azdo) &&
+       /getIterationTree/.test(azdo) &&
+       /queryStoredWorkItems/.test(azdo),
+    'AzDO integration supports live capacity response shape and future iteration discovery');
+});
+
 await t.test('GitHub CLI auth is isolated from inherited environment tokens', () => {
   const gh = readFileSync('github.js', 'utf8');
   const srv = readFileSync(SERVER, 'utf8');
@@ -376,8 +426,8 @@ await t.test('AI configuration exposes model-aware reasoning and bounded Code Fl
     'the server exposes model capabilities and applies the Code Flow timeout');
   t.ok(/modelEffortOptions\('execution'\)/.test(html) &&
     /low:\s*'Fast'/.test(html) &&
-    /Code Flow AI review timeout/.test(html),
-    'Settings presents friendly, model-aware effort levels and a review timeout');
+    /Code Flow AI review window/.test(html),
+    'Settings presents friendly, model-aware effort levels and an activity-aware review window');
   t.ok(/api\/model-audit/.test(server) &&
     /Strict model selection/.test(html) &&
     /Actual models reported in the last 30 days/.test(html) &&
@@ -482,9 +532,18 @@ await t.test('Code Flow AI review reports durable live phase and tool activity',
     /reviewRecoveryAttempted:\s*recoveryNeeded/.test(route) &&
     /The agent did not provide a reason/.test(route),
     'a missing report is recovered from the completed response without a second open-ended AI run');
-  t.ok(/configuredMs \+ 10 \* 60 \* 1000/.test(server) &&
+  t.ok(/reviewHardTimeoutMinutes \|\| r\.reviewTimeoutMinutes/.test(server) &&
+    /hardDeadline \+ 10 \* 60 \* 1000/.test(server) &&
     /The review exceeded its overall execution deadline/.test(server),
     'the stale-record watchdog gives live work teardown headroom while retaining a whole-lifecycle deadline');
+  t.ok(/reviewHardTimeoutMinutes = Math\.min\(120, Math\.max\(reviewTimeoutMinutes \+ 30, reviewTimeoutMinutes \* 2\)\)/.test(route) &&
+    /reviewActivityGraceMinutes/.test(route) &&
+    /Active review extended beyond its initial window/.test(route) &&
+    /completionReason: reason === 'hard-cap' \? 'hard-cap-timeout' : 'activity-timeout'/.test(route),
+    'active reviews extend beyond the configured window while retaining inactivity and absolute-cap termination');
+  t.ok(/reviewHardTimeoutMinutes/.test(html) &&
+    /Number\(rec0\.reviewTimeoutMinutes\)/.test(html),
+    'browser polling follows the extended review cap when a live review continues making progress');
   t.ok(/function _cfWriteArtifactFile/.test(server) &&
     /stat\.isSymbolicLink\(\) \|\| !stat\.isFile\(\)/.test(server) &&
     /flag: 'wx'/.test(server),

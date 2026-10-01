@@ -21611,6 +21611,234 @@
 
           </section>
 
+          <!-- ===== AzDo.AI (sprint brief + commitment map) ===== -->
+          <section x-show="!loading && !errorMessage && route === 'azdo-ai'">
+            <style>
+              .azai{max-width:1440px;margin:0 auto;padding:4px 4px 60px;color:var(--cp-text)}
+              .azai *{box-sizing:border-box}
+              .azai-head{display:flex;align-items:flex-end;justify-content:space-between;gap:20px;margin-bottom:16px}
+              .azai-kicker{color:var(--cp-accent);font-size:12px;font-weight:700;letter-spacing:.07em;text-transform:uppercase}
+              .azai h1{font-size:26px;letter-spacing:-.02em;margin:3px 0 5px}
+              .azai-lede{margin:0;color:var(--cp-text-muted);font-size:13.5px}
+              .azai-links,.azai-tools,.azai-tabs{display:flex;align-items:center;flex-wrap:wrap;gap:14px}
+              .azai-link{padding:3px 0;border:0;border-bottom:1px solid transparent;background:transparent;color:var(--cp-link);font:inherit;font-size:12.5px;text-decoration:none;cursor:pointer}
+              .azai-link:hover{border-bottom-color:var(--cp-link)}
+              .azai-tabs{border-bottom:1px solid var(--cp-border);margin-bottom:14px}
+              .azai-tab{border:0;border-bottom:3px solid transparent;background:transparent;color:var(--cp-text-muted);padding:10px 2px 11px;font:inherit;font-weight:650;cursor:pointer}
+              .azai-tab.active{border-bottom-color:var(--cp-accent);color:var(--cp-accent)}
+              .azai-toolbar{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:14px}
+              .azai-select,.azai-btn{min-height:34px;border:1px solid var(--cp-border);border-radius:8px;background:var(--cp-surface);color:var(--cp-text);padding:6px 10px;font:inherit;font-size:12.5px}
+              .azai-btn{cursor:pointer}.azai-btn:hover{border-color:var(--cp-border-strong)}
+              .azai-btn.primary{border-color:var(--cp-accent);background:var(--cp-accent);color:var(--cp-accent-fg)}
+              .azai-btn:disabled{opacity:.55;cursor:default}
+              .azai-callout{display:flex;align-items:center;justify-content:space-between;gap:18px;border-left:3px solid var(--cp-warning);background:var(--cp-surface);padding:12px 14px;margin-bottom:14px;font-size:13px}
+              .azai-error,.azai-empty{border:1px solid var(--cp-border);border-radius:10px;background:var(--cp-surface);padding:18px;color:var(--cp-text-muted)}
+              .azai-error{border-left:3px solid var(--cp-danger)}
+              .azai-grid{display:grid;grid-template-columns:minmax(0,1.55fr) minmax(290px,.7fr);border:1px solid var(--cp-border);border-radius:14px;background:var(--cp-bg-elevated);overflow:hidden}
+              .azai-main{padding:18px}.azai-side{padding:18px;border-left:1px solid var(--cp-border);background:var(--cp-surface-soft)}
+              .azai-metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-bottom:18px}
+              .azai-metric{min-height:98px;border:1px solid var(--cp-border);border-radius:10px;background:var(--cp-surface);color:var(--cp-text);padding:13px;text-align:left;font:inherit}
+              button.azai-metric{cursor:pointer;transition:border-color .12s ease,background .12s ease,transform .12s ease}button.azai-metric:hover{border-color:var(--cp-accent);background:var(--cp-accent-soft);transform:translateY(-1px)}button.azai-metric.active{border-color:var(--cp-accent);box-shadow:inset 0 0 0 1px var(--cp-accent);background:var(--cp-accent-soft)}
+              .azai-metric.warn{border-left:3px solid var(--cp-warning)}.azai-metric.danger{border-left:3px solid var(--cp-danger)}
+              .azai-metric span{display:block;color:var(--cp-text-muted);font-size:11.5px}.azai-metric strong{display:block;margin:6px 0 2px;font-size:25px}.azai-metric small{color:var(--cp-text-soft)}
+              .azai-filter-status{display:flex;align-items:center;gap:10px;color:var(--cp-text-muted);font-size:11.5px}
+              .azai-section-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin:18px 0 8px}
+              .azai-section-head h2,.azai-side h2{margin:0;font-size:14px}.azai-section-head span{color:var(--cp-text-muted);font-size:11.5px}
+              .azai-table{width:100%;border-collapse:collapse;font-size:12.5px}
+              .azai-table th{border-bottom:1px solid var(--cp-border-strong);padding:7px 6px;color:var(--cp-text-muted);font-size:10.5px;text-align:left;text-transform:uppercase;letter-spacing:.04em}
+              .azai-table td{border-bottom:1px solid var(--cp-border);padding:10px 6px;vertical-align:top}
+              .azai-row{cursor:pointer}.azai-row:hover{background:var(--cp-accent-soft)}
+              .azai-title{display:block;font-weight:650;line-height:1.35}.azai-meta{display:block;margin-top:3px;color:var(--cp-text-muted);font-size:11.5px}
+              .azai-signal{font-weight:650}.azai-signal.success{color:var(--cp-success)}.azai-signal.warning{color:var(--cp-warning)}.azai-signal.danger{color:var(--cp-danger)}
+              .azai-action{white-space:nowrap}
+              .azai-cap{margin:10px 0;border:1px solid var(--cp-border);border-radius:9px;background:var(--cp-surface);padding:11px}
+              .azai-cap-top{display:flex;justify-content:space-between;gap:8px;font-size:12px}
+              .azai-bar{height:7px;margin:8px 0 5px;border-radius:4px;background:var(--cp-border);overflow:hidden}.azai-bar span{display:block;height:100%;background:var(--cp-accent)}.azai-bar span.warn{background:var(--cp-warning)}.azai-bar span.danger{background:var(--cp-danger)}
+              .azai-person{display:grid;grid-template-columns:minmax(0,1fr) 52px;gap:8px;padding:9px 0;border-bottom:1px solid var(--cp-border);font-size:12px}.azai-person strong{display:block}.azai-person small{color:var(--cp-text-muted)}.azai-load{text-align:right;font-weight:700}
+              .azai-oof{margin:6px 0 0;padding:0;list-style:none}.azai-oof li{display:grid;grid-template-columns:80px minmax(0,1fr);gap:8px;padding:8px 0;border-bottom:1px solid var(--cp-border);font-size:12px}.azai-oof time{color:var(--cp-accent);font-weight:650}
+              .azai-source{display:block;margin-top:2px;color:var(--cp-text-muted);font-size:10.5px}
+              .azai-map{display:grid;grid-template-columns:220px minmax(0,1fr) 300px;min-height:620px;border:1px solid var(--cp-border);border-radius:14px;background:var(--cp-bg-elevated);overflow:hidden}
+              .azai-map-rail{padding:15px;border-right:1px solid var(--cp-border);background:var(--cp-surface-soft)}.azai-map-stage{padding:16px;overflow:auto}.azai-detail{padding:16px;border-left:1px solid var(--cp-border);background:var(--cp-surface)}
+              .azai-rail-link{display:block;width:100%;border:0;border-left:3px solid transparent;background:transparent;color:var(--cp-text);padding:9px 8px;text-align:left;font:inherit;font-size:12px;cursor:pointer}.azai-rail-link.active{border-left-color:var(--cp-accent);background:var(--cp-accent-soft)}
+              .azai-map-head,.azai-map-row{display:grid;grid-template-columns:140px repeat(3,minmax(170px,1fr));gap:8px;min-width:720px}.azai-map-head{margin-bottom:8px;color:var(--cp-text-muted);font-size:11px;font-weight:650}.azai-map-row{margin-bottom:10px}
+              .azai-owner{padding:8px 4px}.azai-owner strong{display:block;font-size:12px}.azai-owner small{color:var(--cp-text-muted)}
+              .azai-cell{min-height:112px;border:1px dashed var(--cp-border-strong);border-radius:9px;background:var(--cp-surface-soft);padding:7px}
+              .azai-card{display:block;width:100%;border:1px solid var(--cp-border);border-left:3px solid var(--cp-accent);border-radius:7px;background:var(--cp-surface);color:var(--cp-text);padding:8px;text-align:left;font:inherit;cursor:pointer}.azai-card+.azai-card{margin-top:6px}.azai-card:hover,.azai-card.selected{border-color:var(--cp-accent)}.azai-card.unplanned{border-left-color:var(--cp-warning)}.azai-card.risk{border-left-color:var(--cp-danger)}.azai-card strong{display:block;font-size:11.5px;line-height:1.35}.azai-card small{color:var(--cp-text-muted);font-size:10.5px}
+              .azai-detail h2{font-size:17px;margin:4px 0 12px}.azai-detail-kicker{color:var(--cp-accent);font-size:10.5px;font-weight:700;text-transform:uppercase}.azai-detail-list{margin:0;padding:0;list-style:none}.azai-detail-list li{padding:9px 0;border-bottom:1px solid var(--cp-border);font-size:12px;line-height:1.45}.azai-detail-list strong{display:block;color:var(--cp-text-muted);font-size:10px;text-transform:uppercase}
+              .azai-modal-bg{position:fixed;inset:0;z-index:1800;display:grid;place-items:center;background:var(--cp-overlay);padding:20px}.azai-modal{width:min(520px,100%);border:1px solid var(--cp-border);border-radius:14px;background:var(--cp-surface);box-shadow:var(--cp-shadow);padding:20px}.azai-modal h2{margin:0 0 5px;font-size:18px}.azai-modal p{color:var(--cp-text-muted);font-size:12.5px}.azai-field{display:block;margin:14px 0}.azai-field span{display:block;margin-bottom:5px;font-size:11px;font-weight:650;color:var(--cp-text-muted)}.azai-field textarea{width:100%;min-height:105px;resize:vertical}
+              @media(max-width:1050px){.azai-grid,.azai-map{grid-template-columns:1fr}.azai-side,.azai-detail{border-left:0;border-top:1px solid var(--cp-border)}.azai-map-rail{border-right:0;border-bottom:1px solid var(--cp-border)}}
+              @media(max-width:760px){.azai-head,.azai-toolbar{align-items:flex-start;flex-direction:column}.azai-metrics{grid-template-columns:repeat(2,1fr)}}
+            </style>
+            <div class="azai">
+              <div class="azai-head">
+                <div>
+                  <div class="azai-kicker">AzDo.AI</div>
+                  <h1>Sprint commitments</h1>
+                  <p class="azai-lede">A capacity-aware view of what you and your team committed to, what changed, and what needs an update.</p>
+                </div>
+                <div class="azai-links" x-show="azdoAi.data">
+                  <a class="azai-link" :href="azdoAi.data && azdoAi.data.links.board" target="_blank">Sprint board ↗</a>
+                  <a class="azai-link" :href="azdoAi.data && azdoAi.data.links.query" target="_blank">Sprint query ↗</a>
+                  <a class="azai-link" :href="azdoAi.data && azdoAi.data.links.capacity" target="_blank">Capacity &amp; OOF ↗</a>
+                </div>
+              </div>
+              <div class="azai-tabs">
+                <button type="button" class="azai-tab" :class="{active:azdoAi.view==='brief'}" @click="azdoAi.view='brief'">Daily Sprint Brief</button>
+                <button type="button" class="azai-tab" :class="{active:azdoAi.view==='map'}" @click="azdoAi.view='map'">Commitment Map</button>
+              </div>
+              <div class="azai-toolbar">
+                <div class="azai-tools">
+                  <select class="azai-select" x-model="azdoAi.scope" aria-label="Work scope">
+                    <option value="all">Me + my team</option><option value="mine">My work</option><option value="team">Team only</option>
+                  </select>
+                  <select class="azai-select" x-model="azdoAi.stateFilter" aria-label="Progress state">
+                    <option value="all">All progress states</option><option value="in-progress">In progress</option><option value="not-in-progress">Not in progress</option>
+                  </select>
+                  <button type="button" class="azai-link" @click="azdoAi.showUnplanned=!azdoAi.showUnplanned" x-text="azdoAi.showUnplanned?'Hide unplanned work':'Show unplanned work'"></button>
+                  <div class="azai-filter-status" x-show="azdoAi.metricFilter">
+                    <span x-text="'Card filter: '+azdoAiMetricLabel(azdoAi.metricFilter)"></span>
+                    <button type="button" class="azai-link" @click="azdoAi.metricFilter=''">Clear</button>
+                  </div>
+                </div>
+                <div class="azai-tools">
+                  <span class="hint" x-show="azdoAi.data && azdoAi.data.fetchedAt" x-text="'Synced '+formatRelative(azdoAi.data.fetchedAt)"></span>
+                  <button type="button" class="azai-btn" :disabled="azdoAi.loading" @click="loadAzdoAi(true)" x-text="azdoAi.loading?'Refreshing…':'Refresh from AzDO'"></button>
+                </div>
+              </div>
+              <div class="azai-empty" x-show="azdoAi.loading && !azdoAi.data">Reading sprint commitments and capacity…</div>
+              <div class="azai-error" x-show="azdoAi.error"><strong>AzDo.AI could not load.</strong><div x-text="azdoAi.error"></div></div>
+
+              <template x-if="azdoAi.data">
+                <div>
+                  <div class="azai-callout" x-show="azdoAi.data.summary.needsUpdate">
+                    <div><strong x-text="azdoAi.data.summary.needsUpdate+' committed '+(azdoAi.data.summary.needsUpdate===1?'item needs':'items need')+' a progress update'"></strong><div class="hint">A quick confidence and note check-in creates the history AzDo.AI needs to distinguish normal work from a slipping trend.</div></div>
+                    <button type="button" class="azai-btn primary" @click="azdoAiOpenCheckin(azdoAiItems('current').find(i=>i.needsUpdate))">Update now</button>
+                  </div>
+
+                  <div x-show="azdoAi.view==='brief'" class="azai-grid">
+                    <div class="azai-main">
+                      <div class="azai-metrics">
+                        <button type="button" class="azai-metric" :class="{active:azdoAi.metricFilter==='mine-committed'}" @click="azdoAiSetMetricFilter('mine-committed')"><span>My committed work</span><strong x-text="azdoAi.data.summary.mineCommitted"></strong><small x-text="azdoAiIterationLabel('current')"></small></button>
+                        <button type="button" class="azai-metric warn" :class="{active:azdoAi.metricFilter==='at-risk'}" @click="azdoAiSetMetricFilter('at-risk')"><span>At risk this sprint</span><strong x-text="azdoAi.data.summary.atRisk"></strong><small>Capacity and progress adjusted</small></button>
+                        <button type="button" class="azai-metric danger" :class="{active:azdoAi.metricFilter==='carried'}" @click="azdoAiSetMetricFilter('carried')"><span>Carried into sprint</span><strong x-text="azdoAi.data.summary.carried"></strong><small>Started before this iteration</small></button>
+                        <button type="button" class="azai-metric" :class="{active:azdoAi.metricFilter==='added'}" @click="azdoAiSetMetricFilter('added')"><span>Added after planning</span><strong x-text="azdoAi.data.summary.addedAfterPlanning"></strong><small x-text="azdoAi.data.summary.changed+' recent field changes'"></small></button>
+                      </div>
+
+                      <div class="azai-section-head"><h2>Needs a decision</h2><span>Ranked by risk and stale progress</span></div>
+                      <div class="azai-empty" x-show="!azdoAiDecisionItems().length">No current commitment needs attention.</div>
+                      <table class="azai-table" x-show="azdoAiDecisionItems().length">
+                        <thead><tr><th>Work</th><th>Owner</th><th>Signal</th><th>Update</th><th></th></tr></thead>
+                        <tbody>
+                          <template x-for="item in azdoAiDecisionItems()" :key="'decision-'+item.id">
+                            <tr class="azai-row" @click="azdoAiSelect(item)">
+                              <td><a class="azai-title" :href="item.url" target="_blank" @click.stop x-text="'#'+item.id+' · '+item.title"></a><span class="azai-meta" x-text="[item.state,item.blocked?'blocked':'',item.carried?'carried':'',item.addedAfterPlanning?'added after planning':''].filter(Boolean).join(' · ')"></span></td>
+                              <td x-text="item.assignedTo.name||'Unassigned'"></td>
+                              <td><span class="azai-signal" :class="azdoAiRiskClass(item)" x-text="azdoAiRiskLabel(item)"></span></td>
+                              <td x-text="item.staleDays>90?'No signal':item.staleDays+'d ago'"></td>
+                              <td class="azai-action"><button type="button" class="azai-link" @click.stop="azdoAiOpenCheckin(item)">Record update</button></td>
+                            </tr>
+                          </template>
+                        </tbody>
+                      </table>
+
+                      <div class="azai-section-head" id="azdo-ai-work-items"><h2>Committed work</h2><span x-text="azdoAiItems('current').length+' items'"></span></div>
+                      <table class="azai-table">
+                        <thead><tr><th>Work</th><th>Owner</th><th>State</th><th>Confidence</th><th></th></tr></thead>
+                        <tbody>
+                          <template x-for="item in azdoAiItems('current')" :key="'current-'+item.id">
+                            <tr class="azai-row">
+                              <td><a class="azai-title" :href="item.url" target="_blank" x-text="'#'+item.id+' · '+item.title"></a><span class="azai-meta" x-text="(item.effortValue||1)+' effort · changed '+formatRelative(item.changedDate)"></span></td>
+                              <td x-text="item.assignedTo.name||'Unassigned'"></td><td x-text="item.state"></td>
+                              <td><span class="azai-signal" :class="azdoAiRiskClass(item)" x-text="azdoAiRiskLabel(item)"></span></td>
+                              <td><button type="button" class="azai-link" @click="azdoAiOpenCheckin(item)">Update</button></td>
+                            </tr>
+                          </template>
+                        </tbody>
+                      </table>
+
+                      <div class="azai-section-head"><h2>Future work</h2><span x-text="azdoAiIterationLabel('next')+' and future consideration'"></span></div>
+                      <table class="azai-table">
+                        <thead><tr><th>Work</th><th>Owner</th><th>Horizon</th><th>State</th></tr></thead>
+                        <tbody>
+                          <template x-for="item in azdoAiItems().filter(i=>i.iterationKind==='next'||i.iterationKind==='future')" :key="'future-'+item.id">
+                            <tr><td><a class="azai-title" :href="item.url" target="_blank" x-text="'#'+item.id+' · '+item.title"></a></td><td x-text="item.assignedTo.name||'Unassigned'"></td><td x-text="item.iterationKind==='next'?azdoAiIterationLabel('next'):azdoAiIterationLabel('future')"></td><td x-text="item.state"></td></tr>
+                          </template>
+                        </tbody>
+                      </table>
+                    </div>
+                    <aside class="azai-side">
+                      <div class="azai-section-head"><h2>Capacity after OOF</h2><a class="azai-link" :href="azdoAi.data.links.capacity" target="_blank">Edit in AzDO ↗</a></div>
+                      <template x-for="row in azdoAi.data.team" :key="row.person.id||row.person.name">
+                        <div class="azai-cap">
+                          <div class="azai-cap-top"><strong x-text="row.person.name"></strong><span x-text="row.allocation+'% allocated'"></span></div>
+                          <div class="azai-bar"><span :class="row.allocation>105?'danger':row.allocation>90?'warn':''" :style="'width:'+Math.min(100,row.allocation)+'%'"></span></div>
+                          <small x-text="row.availableDays+' available days · '+row.committed+' committed effort'"></small>
+                        </div>
+                      </template>
+                      <div class="azai-section-head"><h2>OOF schedule</h2><button type="button" class="azai-link" :disabled="azdoAi.oofRefreshing" @click="azdoAiRefreshOof()" x-text="azdoAi.oofRefreshing?'Reading calendars…':'Refresh calendars'"></button></div>
+                      <p class="hint">Combines AzDO capacity days with OOF events people report through Teams and Outlook calendars.</p>
+                      <ul class="azai-oof">
+                        <template x-for="(item,index) in azdoAi.data.oof" :key="item.person+'-'+item.start+'-'+index">
+                          <li><time x-text="azdoAiFmtDate(item.start)+(item.end&&item.end!==item.start?'–'+azdoAiFmtDate(item.end):'')"></time><span><strong x-text="item.person"></strong><span x-text="item.subject"></span><span class="azai-source" x-text="item.source==='calendar'?'Teams / Outlook calendar':'AzDO capacity'"></span></span></li>
+                        </template>
+                      </ul>
+                      <div class="azai-empty" x-show="!azdoAi.data.oof.length">No OOF entries found for this sprint.</div>
+                      <p class="hint" x-show="azdoAi.data.calendar.error" x-text="azdoAi.data.calendar.error"></p>
+                    </aside>
+                  </div>
+
+                  <div x-show="azdoAi.view==='map'" class="azai-map">
+                    <aside class="azai-map-rail">
+                      <h2>Commitment signals</h2>
+                      <button type="button" class="azai-rail-link" :class="{active:azdoAi.mapFilter==='all'}" @click="azdoAi.mapFilter='all'">All commitments <span x-text="azdoAiItems().length"></span></button>
+                      <button type="button" class="azai-rail-link" :class="{active:azdoAi.mapFilter==='changed'}" @click="azdoAi.mapFilter='changed'">Changed since last sync <span x-text="azdoAi.data.summary.changed"></span></button>
+                      <button type="button" class="azai-rail-link" :class="{active:azdoAi.mapFilter==='risk'}" @click="azdoAi.mapFilter='risk'">Likely to slip <span x-text="azdoAi.data.summary.atRisk"></span></button>
+                      <button type="button" class="azai-rail-link" :class="{active:azdoAi.mapFilter==='unplanned'}" @click="azdoAi.mapFilter='unplanned'">Added after planning <span x-text="azdoAi.data.summary.addedAfterPlanning"></span></button>
+                    </aside>
+                    <div class="azai-map-stage">
+                      <div class="azai-map-head"><div>Owner</div><div x-text="azdoAiIterationLabel('current')"></div><div x-text="azdoAiIterationLabel('next')"></div><div x-text="azdoAiIterationLabel('future')"></div></div>
+                      <template x-for="owner in azdoAiOwners()" :key="owner.name">
+                        <div class="azai-map-row">
+                          <div class="azai-owner"><strong x-text="owner.name"></strong><small x-text="owner.capacity?(owner.capacity.allocation+'% allocated · '+owner.capacity.availableDays+' days'):'No capacity record'"></small></div>
+                          <div class="azai-cell"><template x-for="item in owner.current" :key="'map-c-'+item.id"><button type="button" class="azai-card" :class="{selected:azdoAi.selectedId===item.id,unplanned:item.addedAfterPlanning,risk:item.riskScore>=5}" @click="azdoAiSelect(item)"><strong x-text="item.title"></strong><small x-text="'#'+item.id+' · '+item.state+' · '+azdoAiRiskLabel(item)"></small></button></template></div>
+                          <div class="azai-cell"><template x-for="item in owner.next" :key="'map-n-'+item.id"><button type="button" class="azai-card" :class="{selected:azdoAi.selectedId===item.id}" @click="azdoAiSelect(item)"><strong x-text="item.title"></strong><small x-text="'#'+item.id+' · '+item.state"></small></button></template></div>
+                          <div class="azai-cell"><template x-for="item in owner.future" :key="'map-f-'+item.id"><button type="button" class="azai-card" :class="{selected:azdoAi.selectedId===item.id}" @click="azdoAiSelect(item)"><strong x-text="item.title"></strong><small x-text="'#'+item.id+' · '+item.state"></small></button></template></div>
+                        </div>
+                      </template>
+                    </div>
+                    <aside class="azai-detail">
+                      <template x-if="azdoAiSelected()">
+                        <div>
+                          <span class="azai-detail-kicker" x-text="'DNCENG #'+azdoAiSelected().id"></span>
+                          <h2 x-text="azdoAiSelected().title"></h2>
+                          <ul class="azai-detail-list">
+                            <li><strong>Current read</strong><span x-text="azdoAiSelected().state+' · '+azdoAiRiskLabel(azdoAiSelected())+' · '+azdoAiSelected().staleDays+' days since a usable signal'"></span></li>
+                            <li><strong>What changed</strong><span x-text="azdoAiSelected().changes.length?azdoAiSelected().changes.join(', ')+' changed since the prior snapshot':'No material field change since the prior snapshot'"></span></li>
+                            <li><strong>Planning context</strong><span x-text="[azdoAiSelected().carried?'carried into sprint':'',azdoAiSelected().addedAfterPlanning?'added after planning':''].filter(Boolean).join(' · ')||'Part of the observed sprint plan'"></span></li>
+                            <li><strong>Latest update</strong><span x-text="azdoAiSelected().checkin?(azdoAiSelected().checkin.note||azdoAiSelected().checkin.confidence):'No AzDo.AI check-in yet'"></span></li>
+                          </ul>
+                          <a class="azai-btn primary" style="display:block;text-align:center;text-decoration:none;margin-top:14px" :href="azdoAiSelected().url" target="_blank">Open in Azure DevOps ↗</a>
+                          <button type="button" class="azai-btn" style="width:100%;margin-top:8px" @click="azdoAiOpenCheckin(azdoAiSelected())">Record progress update</button>
+                        </div>
+                      </template>
+                    </aside>
+                  </div>
+                </div>
+              </template>
+
+              <div class="azai-modal-bg" x-show="azdoAi.checkinOpen" x-cloak @click.self="azdoAi.checkinOpen=false">
+                <form class="azai-modal" @submit.prevent="azdoAiSaveCheckin()">
+                  <h2>Update committed work</h2>
+                  <p><strong x-text="'#'+azdoAi.checkin.id+' · '+azdoAi.checkin.title"></strong></p>
+                  <label class="azai-field"><span>Delivery confidence</span><select class="azai-select" style="width:100%" x-model="azdoAi.checkin.confidence"><option value="on-track">On track</option><option value="watch">Watch</option><option value="at-risk">At risk</option></select></label>
+                  <label class="azai-field"><span>Progress, blocker, or next step</span><textarea class="azai-select" x-model="azdoAi.checkin.note" placeholder="What changed since your last update?"></textarea></label>
+                  <p class="azai-error" x-show="azdoAi.checkin.error" x-text="azdoAi.checkin.error"></p>
+                  <div class="azai-tools" style="justify-content:flex-end"><button type="button" class="azai-btn" @click="azdoAi.checkinOpen=false">Cancel</button><button type="submit" class="azai-btn primary" :disabled="azdoAi.checkin.saving" x-text="azdoAi.checkin.saving?'Saving…':'Record update'"></button></div>
+                </form>
+              </div>
+            </div>
+          </section>
+
           <!-- ===== Meetings.AI (recent meetings + animated recap studio) ===== -->
           <section x-show="!loading && !errorMessage && route === 'meetings'">
             <style>
@@ -29284,7 +29512,7 @@
                   <p class="hint" style="margin-top:6px">Internal orchestration, planning, classifiers, judges and retry decisions.</p>
                 </div>
                 <div>
-                  <label class="field-label">Code Flow AI review timeout</label>
+                  <label class="field-label">Code Flow AI review window</label>
                   <select class="field-input" x-model.number="modelSettings.codeflowReviewTimeoutMinutes" @change="saveModelSettings()">
                     <option :value="10">10 minutes</option>
                     <option :value="20">20 minutes</option>
@@ -29293,7 +29521,7 @@
                     <option :value="60">60 minutes</option>
                     <option :value="90">90 minutes</option>
                   </select>
-                  <p class="hint" style="margin-top:6px">A review stops cleanly after this limit. Use Fast reasoning before raising the timeout for routine PRs.</p>
+                  <p class="hint" style="margin-top:6px">This is the guaranteed review window. Active reviews continue while tool or model progress remains fresh, with a separate absolute cap.</p>
                 </div>
               </div>
               <div style="margin-top:18px;padding-top:16px;border-top:1px solid var(--cp-border)">
@@ -32965,14 +33193,14 @@
         // Optional features the user can switch on while staying in Basic mode. Each
         // key toggles the matching nav item into the flat Basic sidebar.
         basicFeatures: (() => {
-          const defaults = { 'me-ai': true, diary: true, managers: false, tasks: true, autonomous: true, flows: false, watercooler: false, sessions: false, news: false, connect: false, newsletter: false, pulse: false, meetings: false, epics: false, devbuddy: false };
+          const defaults = { 'me-ai': true, diary: true, managers: false, tasks: true, autonomous: true, flows: false, watercooler: false, sessions: false, news: false, connect: false, newsletter: false, pulse: false, meetings: false, 'azdo-ai': false, epics: false, devbuddy: false };
           try { const raw = JSON.parse(localStorage.getItem('basic-features') || '{}') || {}; return Object.assign(defaults, raw); } catch { return defaults; }
         })(),
         // Advanced is the inverse of Basic: every optional feature starts ON and the
         // user opts OUT. Persists independently of basicFeatures so each level keeps
         // its own curated set. A newly-shipped key defaults to on (stays visible).
         advancedFeatures: (() => {
-          const defaults = { 'me-ai': true, diary: true, autonomous: true, playbooks: true, watercooler: true, sessions: true, news: true, connect: true, newsletter: true, pulse: true, meetings: true, epics: true, devbuddy: true };
+          const defaults = { 'me-ai': true, diary: true, autonomous: true, playbooks: true, watercooler: true, sessions: true, news: true, connect: true, newsletter: true, pulse: true, meetings: true, 'azdo-ai': true, epics: true, devbuddy: true };
           try { const raw = JSON.parse(localStorage.getItem('advanced-features') || '{}') || {}; return Object.assign(defaults, raw); } catch { return defaults; }
         })(),
         // Home "Getting started" guided onboarding (Basic only). Tracks dismissal so
@@ -33935,6 +34163,13 @@ grpCollapsed: (() => { try { return JSON.parse(localStorage.getItem('cfGrpCollap
             chat: { open: false, sending: false, byKey: {}, input: '', live: null, traceOpen: true },
           },
         },
+        azdoAi: {
+          loaded: false, loading: false, error: '', view: 'brief', data: null,
+          scope: 'all', stateFilter: 'all', metricFilter: '', showUnplanned: true, mapFilter: 'all', selectedId: null,
+          oofRefreshing: false,
+          checkinOpen: false,
+          checkin: { id: null, title: '', confidence: 'on-track', note: '', saving: false, error: '' }
+        },
         codeflowAttention: { mine: 0, reviews: 0, total: 0, mineActive: 0, reviewsActive: 0, otherActive: 0 },
         marketplaceUpdates: { newCount: 0, byType: {}, lastViewedAt: null, lastAutoScanAt: null, items: [], loaded: false },
         // Lightweight copy of the user's own active PRs for the Home page card.
@@ -34346,6 +34581,10 @@ grpCollapsed: (() => { try { return JSON.parse(localStorage.getItem('cfGrpCollap
           this._ghPoll = setInterval(() => this.refreshGithubStatus(false), 300000);
           setTimeout(() => this.refreshAzdoStatus(false), 3000);
           this._azdoPoll = setInterval(() => this.refreshAzdoStatus(false), 300000);
+          // AzDo.AI reminder badge + one quiet daily toast. Loading is deferred so
+          // Azure DevOps can never delay the app shell.
+          setTimeout(() => this.loadAzdoAi(), 7000);
+          this._azdoAiPoll = setInterval(() => this.loadAzdoAi(true), 900000);
           // Marketplace "new items" nav badge — lazy + periodic so it never blocks startup.
           setTimeout(() => this.loadMarketplaceUpdates(true), 5000);
           this._marketplaceUpdTimer = setInterval(() => this.loadMarketplaceUpdates(true), 300000);
@@ -35086,7 +35325,7 @@ grpCollapsed: (() => { try { return JSON.parse(localStorage.getItem('cfGrpCollap
           if (first === 'monitoring' && second) return { route: 'monitoring', param: second };
           if ((first === 'meetings' || first === 'meetings-ai') && second) return { route: 'meetings', param: second };
           if (first === 'meetings-ai') return { route: 'meetings', param: null };
-          if (['home', 'agents', 'managers', 'executions', 'resources', 'autonomous', 'tasks', 'chains', 'design', 'create-agent', 'export', 'agent-discovery', 'new-task', 'chain', 'standup', 'assignments', 'chat', 'sessions', 'updates', 'activity', 'events', 'settings', 'reports', 'marketplace', 'boards', 'codeflow', 'dev', 'dev-archive', 'connect', 'newsletter', 'compose', 'documents', 'todo-ai', 'me-ai', 'monitoring', 'meetings', 'pulse', 'backlog', 'diary', 'playbooks'].includes(first)) return { route: first, param: second };
+          if (['home', 'agents', 'managers', 'executions', 'resources', 'autonomous', 'tasks', 'chains', 'design', 'create-agent', 'export', 'agent-discovery', 'new-task', 'chain', 'standup', 'assignments', 'chat', 'sessions', 'updates', 'activity', 'events', 'settings', 'reports', 'marketplace', 'boards', 'azdo-ai', 'codeflow', 'dev', 'dev-archive', 'connect', 'newsletter', 'compose', 'documents', 'todo-ai', 'me-ai', 'monitoring', 'meetings', 'pulse', 'backlog', 'diary', 'playbooks'].includes(first)) return { route: first, param: second };
           return { route: 'home', param: null };
         },
 
@@ -35499,6 +35738,8 @@ grpCollapsed: (() => { try { return JSON.parse(localStorage.getItem('cfGrpCollap
             await this.monLoad(this.app.routeParam || '');
           } else if (this.route === 'meetings') {
             await this.loadMeetings(this.app.routeParam || '');
+          } else if (this.route === 'azdo-ai') {
+            await this.loadAzdoAi();
           } else if (this.route === 'backlog') {
             if (!this.meai.loaded) await this.loadMeAi();
             await this.loadMeaiBacklog();
@@ -36546,6 +36787,7 @@ grpCollapsed: (() => { try { return JSON.parse(localStorage.getItem('cfGrpCollap
             case 'pulse': return mk("Pulse.AI", '📡', '#/pulse', 'pulse', { attnBadge: (this.pulseActiveSummary() && Array.isArray(this.pulseActiveSummary().worthALook)) ? this.pulseWorthList().length : 0, attnTitle: 'Conversations worth your attention' });
             case 'backlog': return mk('Backlog', '🗂', '#/backlog', 'backlog');
             case 'boards': return mk('Workspaces.AI', '📌', '#/boards', 'boards', { badge: (this.homeBoards() || []).length, badgeTitle: 'Your Workspaces.AI' });
+            case 'azdo-ai': return mk('AzDo.AI', '▦', '#/azdo-ai', 'azdo-ai', { attnBadge: this.azdoAi.data && this.azdoAi.data.summary ? this.azdoAi.data.summary.needsUpdate : 0, attnTitle: 'Committed work that needs an update' });
             case 'codeflow': return mk('Code Flow', '🔀', '#/codeflow', 'codeflow', { badge: this.codeflowAttention.mineActive || 0, badgeTitle: 'Active pull requests you authored', attnBadge: this.codeflowAttention.reviewsActive || 0, attnTitle: 'Active pull requests for your review' });
             case 'connect': return mk('Connect', '🌟', '#/connect', 'connect');
             case 'diary': return mk('Diary', '📖', '#/diary', 'diary');
@@ -36572,7 +36814,9 @@ grpCollapsed: (() => { try { return JSON.parse(localStorage.getItem('cfGrpCollap
           if (scope === 'basic') {
             const out = ['home'];
             if (en('devbuddy')) out.push('todo-ai');
-            out.push('boards', 'codeflow');
+            out.push('boards');
+            if (en('azdo-ai')) out.push('azdo-ai');
+            out.push('codeflow');
             if (en('me-ai')) out.push('me-ai', 'backlog');
             if (en('pulse')) out.push('pulse');
             if (en('meetings')) out.push('meetings');
@@ -36596,6 +36840,7 @@ grpCollapsed: (() => { try { return JSON.parse(localStorage.getItem('cfGrpCollap
           if (en('pulse')) out.push('pulse');
           if (en('playbooks')) out.push('playbooks');
           out.push('boards');
+          if (en('azdo-ai')) out.push('azdo-ai');
           out.push('codeflow');
           if (en('meetings')) out.push('meetings');
           out.push('agents');
@@ -36635,6 +36880,26 @@ grpCollapsed: (() => { try { return JSON.parse(localStorage.getItem('cfGrpCollap
           }
           // Append any available keys not yet placed (new features, first run).
           for (const k of avail) { if (!seen.has(k)) out.push({ t: 'item', key: k }); }
+          // One-time placement for the newly shipped AzDo.AI item. Existing customized
+          // menus should keep their groups and ordering, so move only the automatically
+          // appended top-level item beside Workspaces.AI inside the same group.
+          if (availSet.has('azdo-ai')) {
+            let migrated = false;
+            try { migrated = localStorage.getItem('nav-migration-azdo-ai-v1') === '1'; } catch {}
+            if (!migrated) {
+              const azdoIndex = out.findIndex(node => node.t === 'item' && node.key === 'azdo-ai');
+              const targetGroup = out.find(node => node.t === 'group' &&
+                node.children.some(child => child.key === 'boards' || child.key === 'codeflow'));
+              if (azdoIndex >= 0 && targetGroup) {
+                const [azdoNode] = out.splice(azdoIndex, 1);
+                const boardsIndex = targetGroup.children.findIndex(child => child.key === 'boards');
+                const codeflowIndex = targetGroup.children.findIndex(child => child.key === 'codeflow');
+                const insertAt = boardsIndex >= 0 ? boardsIndex + 1 : codeflowIndex >= 0 ? codeflowIndex : targetGroup.children.length;
+                targetGroup.children.splice(insertAt, 0, azdoNode);
+              }
+              try { localStorage.setItem('nav-migration-azdo-ai-v1', '1'); } catch {}
+            }
+          }
           // Persist only when the shape actually changed (avoid render loops).
           const prev = saved ? JSON.stringify(saved) : null;
           const next = JSON.stringify(out);
@@ -36901,6 +37166,7 @@ grpCollapsed: (() => { try { return JSON.parse(localStorage.getItem('cfGrpCollap
           if (this.experienceLevel === 'basic') {
             const bf = this.basicFeatures || {};
             const boards = { key: 'boards', label: 'Workspaces.AI', title: 'Workspaces.AI', icon: '📌', href: '#/boards', routeGroup: 'boards', items: [], collapsible: false };
+            const azdoAi = { key: 'azdo-ai', label: 'AzDo.AI', title: 'AzDo.AI', icon: '▦', href: '#/azdo-ai', routeGroup: 'azdo-ai', items: [], collapsible: false, attnBadge: this.azdoAi.data && this.azdoAi.data.summary ? this.azdoAi.data.summary.needsUpdate : 0, attnTitle: 'Committed work that needs an update' };
             const meai = { key: 'me-ai', label: 'Agenda.AI', title: 'Agenda.AI', icon: '🧭', href: '#/me-ai', routeGroup: 'me-ai', items: [], collapsible: false };
             const codeflow = { key: 'codeflow', label: 'Code Flow', title: 'Code Flow', icon: '🔀', href: '#/codeflow', routeGroup: 'codeflow', items: [], collapsible: false, badge: this.codeflowAttention.mineActive || 0, badgeTitle: 'Active pull requests you authored', attnBadge: this.codeflowAttention.reviewsActive || 0, attnTitle: 'Active pull requests for your review' };
             const agents = { key: 'agents', label: 'Agents', title: 'Agents', icon: '🤖', href: '#/agents', routeGroup: 'agents', items: [], collapsible: false };
@@ -36914,7 +37180,7 @@ grpCollapsed: (() => { try { return JSON.parse(localStorage.getItem('cfGrpCollap
               { key: 'activity', title: 'Activity', icon: '📜', href: '#/activity', routeGroup: 'activity', items: [] },
               { key: 'reports', title: 'Reports', icon: '📊', href: '#/reports', routeGroup: 'reports', items: [] }
             ]};
-            const out = [scope, home, boards, codeflow];
+            const out = [scope, home, boards, azdoAi, codeflow];
             if (bf['me-ai']) out.push(meai);
             out.push(agents);
             if (bf.autonomous || bf.tasks || bf.flows) out.push(autonomous);
@@ -36942,6 +37208,7 @@ grpCollapsed: (() => { try { return JSON.parse(localStorage.getItem('cfGrpCollap
             { key: 'me-ai', label: 'Agenda.AI', title: 'Agenda.AI', icon: '🧭', href: '#/me-ai', routeGroup: 'me-ai', items: [], collapsible: false },
             { key: 'playbooks', label: 'Playbooks', title: 'Playbooks', icon: '📘', href: '#/playbooks', routeGroup: 'playbooks', items: [], collapsible: false },
             { key: 'boards', label: 'Workspaces.AI', title: 'Workspaces.AI', icon: '📌', href: '#/boards', routeGroup: 'boards', items: [], collapsible: false },
+            { key: 'azdo-ai', label: 'AzDo.AI', title: 'AzDo.AI', icon: '▦', href: '#/azdo-ai', routeGroup: 'azdo-ai', items: [], collapsible: false },
             { key: 'codeflow', label: 'Code Flow', title: 'Code Flow', icon: '🔀', href: '#/codeflow', routeGroup: 'codeflow', items: [], collapsible: false, badge: this.codeflowAttention.mineActive || 0, badgeTitle: 'Active pull requests you authored', attnBadge: this.codeflowAttention.reviewsActive || 0, attnTitle: 'Active pull requests for your review' },
             ...(this.featureEnabled('meetings') ? [{ key: 'meetings', label: 'Meetings.AI', title: 'Meetings.AI', icon: '🎬', href: '#/meetings', routeGroup: 'meetings', items: [], collapsible: false }] : []),
             { key: 'agents', label: 'Agents', title: 'Agents', icon: '🤖', href: '#/agents', routeGroup: 'agents', items: [], collapsible: false },
@@ -37148,7 +37415,7 @@ grpCollapsed: (() => { try { return JSON.parse(localStorage.getItem('cfGrpCollap
         // marketplace, activity, settings…) that live in both modes.
         routeMode(route) {
           const r = route || this.route;
-          if (['todo-ai', 'boards', 'codeflow', 'dev', 'dev-archive', 'connect', 'newsletter', 'compose', 'documents', 'me-ai', 'monitoring', 'meetings', 'pulse', 'backlog', 'diary', 'playbooks',
+          if (['todo-ai', 'boards', 'codeflow', 'azdo-ai', 'dev', 'dev-archive', 'connect', 'newsletter', 'compose', 'documents', 'me-ai', 'monitoring', 'meetings', 'pulse', 'backlog', 'diary', 'playbooks',
                'agents', 'agent-detail', 'create-agent', 'export', 'agent-discovery', 'standup', 'marketplace', 'design',
                'autonomous', 'tasks', 'task-detail', 'new-task', 'chains', 'chain-detail', 'chain', 'assignments', 'assignment-detail'].includes(r)) return 'workspace';
           // Management (workforce) mode has been removed — everything lives in one
@@ -37183,6 +37450,7 @@ grpCollapsed: (() => { try { return JSON.parse(localStorage.getItem('cfGrpCollap
             { key: 'me-ai', label: 'Agenda.AI', icon: '🧭', hint: 'Your AI-planned daily agenda & personal command center.', requires: 'diary' },
             { key: 'pulse', label: "Pulse.AI", icon: '📡', hint: 'Ambient team conversations & meeting recaps worth staying close to.', requires: 'me-ai' },
             { key: 'meetings', label: 'Meetings.AI', icon: '🎬', hint: 'Verified meeting recaps and evidence-rich narrated newscasts.' },
+            { key: 'azdo-ai', label: 'AzDo.AI', icon: '▦', hint: 'Sprint commitments, capacity, OOF schedules, slippage, and planning changes.' },
             { key: 'devbuddy', label: 'Dev Buddy', icon: '🤖', hint: 'A quiet desktop companion that tracks open loops and calls attention to changes.' },
             { key: 'autonomous', label: 'Automation', icon: '⚡', hint: 'Scheduled tasks & multi-step agent flows.' },
             { key: 'watercooler', label: 'Agent Chats', icon: '💬', hint: 'Ad-hoc chat with your agents.' },
@@ -37202,6 +37470,7 @@ grpCollapsed: (() => { try { return JSON.parse(localStorage.getItem('cfGrpCollap
             { key: 'me-ai', label: 'Agenda.AI', icon: '🧭', hint: 'Your AI-planned daily agenda & personal command center.', requires: 'diary' },
             { key: 'pulse', label: "Pulse.AI", icon: '📡', hint: 'Ambient team conversations & meeting recaps worth staying close to.', requires: 'me-ai' },
             { key: 'meetings', label: 'Meetings.AI', icon: '🎬', hint: 'Verified meeting recaps and evidence-rich narrated newscasts.' },
+            { key: 'azdo-ai', label: 'AzDo.AI', icon: '▦', hint: 'Sprint commitments, capacity, OOF schedules, slippage, and planning changes.' },
             { key: 'devbuddy', label: 'Dev Buddy', icon: '🤖', hint: 'A quiet desktop companion that tracks open loops and calls attention to changes.' },
             { key: 'autonomous', label: 'Automation', icon: '⚡', hint: 'Scheduled tasks & multi-step agent flows.' },
             { key: 'playbooks', label: 'Playbooks', icon: '📘', hint: 'Author & tune the Me-agent playbook prompts.' },
@@ -37291,6 +37560,7 @@ grpCollapsed: (() => { try { return JSON.parse(localStorage.getItem('cfGrpCollap
           // Always-available shared routes (core, non-gateable).
           if (['home', 'boards', 'codeflow', 'dev', 'dev-archive', 'agents', 'agent-detail', 'create-agent', 'export', 'agent-discovery', 'standup', 'marketplace', 'updates', 'settings', 'events'].includes(r)) return true;
           const gated = {
+            'azdo-ai': ['azdo-ai'],
             devbuddy: ['todo-ai'],
             diary: ['diary'],
             'me-ai': ['me-ai', 'backlog'],
@@ -37317,6 +37587,7 @@ grpCollapsed: (() => { try { return JSON.parse(localStorage.getItem('cfGrpCollap
           // Always-available core (never opt-out-able).
           if (['home', 'boards', 'codeflow', 'dev', 'dev-archive', 'agents', 'agent-detail', 'create-agent', 'export', 'agent-discovery', 'standup', 'marketplace', 'updates', 'design', 'settings', 'events'].includes(r)) return true;
           const gated = {
+            'azdo-ai': ['azdo-ai'],
             devbuddy: ['todo-ai'],
             diary: ['diary'],
             'me-ai': ['me-ai', 'backlog'],
@@ -42643,6 +42914,183 @@ grpCollapsed: (() => { try { return JSON.parse(localStorage.getItem('cfGrpCollap
           w.loaded = true;
         },
         // ---- Meetings.AI ----
+        // ===== AzDo.AI — sprint commitments, capacity and change signals =====
+        async loadAzdoAi(force) {
+          if (this.azdoAi.loading) return;
+          if (this.azdoAi.loaded && !force) return;
+          this.azdoAi.loading = true;
+          this.azdoAi.error = '';
+          try {
+            const data = await this.request('/api/azdo-ai' + (force ? '?refresh=1' : ''), { timeoutMs: 180000 });
+            this.azdoAi.data = data;
+            this.azdoAi.loaded = true;
+            this.azdoAiMaybeRemind();
+            const selectedStillExists = (data.items || []).some(item => item.id === this.azdoAi.selectedId);
+            if (!selectedStillExists) {
+              const first = (data.items || []).find(item => item.isMine && item.iterationKind === 'current') ||
+                (data.items || []).find(item => item.iterationKind === 'current') || data.items[0];
+              this.azdoAi.selectedId = first ? first.id : null;
+            }
+          } catch (error) {
+            this.azdoAi.error = error && error.message || 'Could not load sprint data.';
+          } finally {
+            this.azdoAi.loading = false;
+          }
+        },
+        azdoAiItems(kind) {
+          const data = this.azdoAi.data;
+          if (!data || !Array.isArray(data.items)) return [];
+          return data.items.filter(item => {
+            if (kind && item.iterationKind !== kind) return false;
+            if (this.azdoAi.scope === 'mine' && !item.isMine) return false;
+            if (this.azdoAi.scope === 'team' && item.isMine) return false;
+            const inProgress = this.azdoAiItemInProgress(item);
+            if (this.azdoAi.stateFilter === 'in-progress' && !inProgress) return false;
+            if (this.azdoAi.stateFilter === 'not-in-progress' && inProgress) return false;
+            if (!this.azdoAi.showUnplanned && item.addedAfterPlanning) return false;
+            if (this.azdoAi.metricFilter === 'mine-committed' && !(item.isMine && item.iterationKind === 'current')) return false;
+            if (this.azdoAi.metricFilter === 'at-risk' && !(item.iterationKind === 'current' && item.riskScore >= 3)) return false;
+            if (this.azdoAi.metricFilter === 'carried' && !(item.iterationKind === 'current' && item.carried)) return false;
+            if (this.azdoAi.metricFilter === 'added' && !(item.iterationKind === 'current' && item.addedAfterPlanning)) return false;
+            return true;
+          });
+        },
+        azdoAiItemInProgress(item) {
+          return /\bin progress\b/i.test(String(item && item.state || ''));
+        },
+        azdoAiMetricLabel(filter) {
+          return {
+            'mine-committed': 'My committed work',
+            'at-risk': 'At risk this sprint',
+            carried: 'Carried into sprint',
+            added: 'Added after planning'
+          }[filter] || '';
+        },
+        azdoAiSetMetricFilter(filter) {
+          if (this.azdoAi.metricFilter === filter) {
+            this.azdoAi.metricFilter = '';
+            return;
+          }
+          this.azdoAi.scope = 'all';
+          this.azdoAi.stateFilter = 'all';
+          this.azdoAi.showUnplanned = true;
+          this.azdoAi.metricFilter = filter;
+          this.$nextTick(() => {
+            const target = document.getElementById('azdo-ai-work-items');
+            if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          });
+        },
+        azdoAiMaybeRemind() {
+          const count = this.azdoAi.data && this.azdoAi.data.summary && this.azdoAi.data.summary.needsUpdate || 0;
+          if (!count) return;
+          const today = new Date().toISOString().slice(0, 10);
+          try {
+            if (localStorage.getItem('azdo-ai-reminded-day') === today) return;
+            localStorage.setItem('azdo-ai-reminded-day', today);
+          } catch {}
+          this.toast(count + ' committed ' + (count === 1 ? 'item needs' : 'items need') + ' a progress update in AzDo.AI.', 'info');
+        },
+        azdoAiDecisionItems() {
+          return this.azdoAiItems('current').filter(item =>
+            item.needsUpdate || item.blocked || item.riskScore >= 3 || item.addedAfterPlanning || item.changes.length
+          ).sort((a, b) => b.riskScore - a.riskScore || b.staleDays - a.staleDays);
+        },
+        azdoAiRiskLabel(item) {
+          if (!item) return '';
+          if (item.confidence === 'at-risk' || item.riskScore >= 5) return 'At risk';
+          if (item.confidence === 'watch' || item.riskScore >= 2) return 'Watch';
+          return 'On track';
+        },
+        azdoAiRiskClass(item) {
+          if (!item) return '';
+          if (item.confidence === 'at-risk' || item.riskScore >= 5) return 'danger';
+          if (item.confidence === 'watch' || item.riskScore >= 2) return 'warning';
+          return 'success';
+        },
+        azdoAiIterationLabel(kind) {
+          const iterations = this.azdoAi.data && this.azdoAi.data.iterations || {};
+          const item = kind === 'current' ? iterations.current : kind === 'next' ? iterations.next : iterations.future;
+          return item && item.name || (kind === 'current' ? 'Current sprint' : kind === 'next' ? 'Sprint +1' : 'Future consideration');
+        },
+        azdoAiOwners() {
+          const data = this.azdoAi.data;
+          if (!data) return [];
+          const teamByName = new Map((data.team || []).map(row => [String(row.person && row.person.name || '').toLowerCase(), row]));
+          const owners = new Map();
+          for (const item of this.azdoAiItems().filter(item => {
+            if (this.azdoAi.mapFilter === 'changed') return item.changes.length > 0;
+            if (this.azdoAi.mapFilter === 'risk') return item.riskScore >= 3;
+            if (this.azdoAi.mapFilter === 'unplanned') return item.addedAfterPlanning;
+            return true;
+          })) {
+            const name = item.assignedTo && item.assignedTo.name || 'Unassigned';
+            if (!owners.has(name)) owners.set(name, { name, current: [], next: [], future: [], capacity: teamByName.get(name.toLowerCase()) || null });
+            const row = owners.get(name);
+            if (item.iterationKind === 'current') row.current.push(item);
+            else if (item.iterationKind === 'next') row.next.push(item);
+            else if (item.iterationKind === 'future') row.future.push(item);
+          }
+          return [...owners.values()].sort((a, b) => {
+            if (a.name === (data.me && data.me.name)) return -1;
+            if (b.name === (data.me && data.me.name)) return 1;
+            return a.name.localeCompare(b.name);
+          });
+        },
+        azdoAiSelected() {
+          return this.azdoAi.data && (this.azdoAi.data.items || []).find(item => item.id === this.azdoAi.selectedId) || null;
+        },
+        azdoAiSelect(item) {
+          if (item) this.azdoAi.selectedId = item.id;
+        },
+        azdoAiOpenCheckin(item) {
+          if (!item) return;
+          this.azdoAi.checkin = {
+            id: item.id,
+            title: item.title || '',
+            confidence: item.checkin && item.checkin.confidence || item.confidence || 'on-track',
+            note: item.checkin && item.checkin.note || '',
+            saving: false,
+            error: ''
+          };
+          this.azdoAi.checkinOpen = true;
+        },
+        async azdoAiSaveCheckin() {
+          const form = this.azdoAi.checkin;
+          if (!form.id || form.saving) return;
+          form.saving = true;
+          form.error = '';
+          try {
+            await this.request('/api/azdo-ai/checkin', {
+              method: 'POST',
+              body: JSON.stringify({ id: form.id, confidence: form.confidence, note: form.note })
+            });
+            this.azdoAi.checkinOpen = false;
+            await this.loadAzdoAi(true);
+            this.toast('Progress update recorded. AzDo.AI will use it in future trend signals.', 'success');
+          } catch (error) {
+            form.error = error && error.message || 'Could not save the update.';
+          } finally {
+            form.saving = false;
+          }
+        },
+        async azdoAiRefreshOof() {
+          if (this.azdoAi.oofRefreshing) return;
+          this.azdoAi.oofRefreshing = true;
+          try {
+            await this.request('/api/azdo-ai/oof/refresh', { method: 'POST', body: '{}', timeoutMs: 180000 });
+            await this.loadAzdoAi(true);
+            this.toast('OOF schedules refreshed from Azure DevOps and Microsoft 365.', 'success');
+          } catch (error) {
+            this.toast(error && error.message || 'Could not refresh OOF schedules.', 'error');
+          } finally {
+            this.azdoAi.oofRefreshing = false;
+          }
+        },
+        azdoAiFmtDate(value) {
+          if (!value) return '';
+          const date = new Date(`${String(value).slice(0, 10)}T00:00:00`);
+          return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+        },
         async loadMeetings(selectId) {
           const w = this.meetings;
           // Route param may carry a view segment: "<id>" (detail) or "<id>/recap"
@@ -57209,7 +57657,8 @@ grpCollapsed: (() => { try { return JSON.parse(localStorage.getItem('cfGrpCollap
           const q = '?org=' + encodeURIComponent(rec0.org) + '&project=' + encodeURIComponent(rec0.project || '') +
             '&repo=' + encodeURIComponent(rec0.repo) + '&prId=' + encodeURIComponent(rec0.prId) +
             '&provider=' + encodeURIComponent(rec0.provider || '');
-          const maxPolls = Math.ceil((((Number(rec0.reviewTimeoutMinutes) || 30) + 5) * 60) / 3);
+          const maxPolls = Math.ceil((((Number(rec0.reviewHardTimeoutMinutes) ||
+            Number(rec0.reviewTimeoutMinutes) || 30) + 5) * 60) / 3);
           for (let i = 0; i < maxPolls; i++) {
             await new Promise(r => setTimeout(r, 3000));
             let resp;

@@ -600,24 +600,30 @@ fn plan_dev_buddy_mode(
     app: tauri::AppHandle,
     mode: String,
     peek_width: Option<u32>,
+    peek_height: Option<u32>,
     scratchpad_height: Option<u32>,
     buddy_left: f64,
     buddy_top: f64,
 ) -> Result<serde_json::Value, String> {
     let window = ensure_dev_buddy_window(&app, "http://127.0.0.1:3848")?;
     let anchor = current_dev_buddy_anchor(&window, buddy_left, buddy_top)?;
-    let (width, height) = dev_buddy_mode_size(&mode, peek_width, scratchpad_height);
+    let (width, height) =
+        dev_buddy_mode_size(&mode, peek_width, peek_height, scratchpad_height);
     position_dev_buddy(&window, width, height, Some(anchor), false)
 }
 
 fn dev_buddy_mode_size(
     mode: &str,
     peek_width: Option<u32>,
+    peek_height: Option<u32>,
     scratchpad_height: Option<u32>,
 ) -> (u32, u32) {
     match mode {
         "workspace" => (u32::MAX, u32::MAX),
-        "peek" => (peek_width.unwrap_or(400).clamp(340, 720), u32::MAX),
+        "peek" => (
+            peek_width.unwrap_or(400).clamp(340, 720),
+            peek_height.unwrap_or(640).clamp(260, 1200),
+        ),
         "scratchpad" => (560, scratchpad_height.unwrap_or(560).clamp(420, 1200)),
         "expanded" => (440, 900),
         "wide" => (680, 900),
@@ -632,12 +638,14 @@ fn set_dev_buddy_mode(
     app: tauri::AppHandle,
     mode: String,
     peek_width: Option<u32>,
+    peek_height: Option<u32>,
     scratchpad_height: Option<u32>,
     anchor_x: Option<i32>,
     anchor_y: Option<i32>,
 ) -> Result<serde_json::Value, String> {
     let window = ensure_dev_buddy_window(&app, "http://127.0.0.1:3848")?;
-    let (width, height) = dev_buddy_mode_size(&mode, peek_width, scratchpad_height);
+    let (width, height) =
+        dev_buddy_mode_size(&mode, peek_width, peek_height, scratchpad_height);
     let anchor = match (anchor_x, anchor_y) {
         (Some(x), Some(y)) => Some(tauri::PhysicalPosition::new(x, y)),
         _ => None,
@@ -1200,6 +1208,17 @@ fn resolve_server_js(app: &tauri::AppHandle) -> PathBuf {
 fn start_sidecar(app: &tauri::AppHandle, state: Arc<SidecarState>) {
     let handle = app.clone();
     std::thread::spawn(move || {
+        // A forcibly terminated or older desktop build may leave its bundled
+        // Node sidecar alive after the native window is gone. Reclaim those
+        // path-scoped processes before provisioning/spawning so port 3848—and
+        // therefore the user's origin-scoped preferences—remains stable.
+        #[cfg(windows)]
+        let startup_node_bin = resolve_node_bin(&handle);
+        #[cfg(windows)]
+        if let Some(node_dir) = startup_node_bin.parent() {
+            kill_node_under(node_dir);
+        }
+
         // Provision the per-user runtime BEFORE the first spawn so the sidecar
         // launches node/copilot from %LOCALAPPDATA%\TheOffice.AI\runtime rather
         // than the versioned install dir. This keeps $INSTDIR\node.exe unlocked,
@@ -1286,8 +1305,8 @@ fn spawn_sidecar_once(app: &tauri::AppHandle, state: &Arc<SidecarState>) {
     // drop all localStorage-backed preferences — theme, icon set, experience
     // level, basic features — which is exactly the "settings reset on upgrade"
     // bug. 3848 sits next to the browser-dev default (3847) to avoid colliding
-    // with a developer's `npm start`. If it's busy, server.js retries briefly
-    // then falls back to an ephemeral port so the window still opens.
+    // with a developer's `npm start`. Startup cleanup reclaims stale bundled
+    // sidecars before this spawn; server.js refuses an origin-changing fallback.
     let mut cmd = Command::new(&node_bin);
     cmd.arg(&server_js)
         .env("PORT", "3848")

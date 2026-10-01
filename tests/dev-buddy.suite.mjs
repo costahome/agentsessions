@@ -13,6 +13,10 @@ const buddy = require(path.join(process.cwd(), 'dev-buddy.js'));
 await t.test('work UI uses a compact list-detail workspace and one completion action', () => {
   const html = readFileSync(path.join(process.cwd(), 'public', 'dev-buddy.html'), 'utf8');
   const app = readFileSync(path.join(process.cwd(), 'public', 'app.html'), 'utf8');
+  const server = readFileSync(path.join(process.cwd(), 'server.js'), 'utf8');
+  const dncengTaskRoute = server.slice(
+    server.indexOf("app.post('/api/dev-buddy/actions/dnceng-task'"),
+    server.indexOf("app.post('/api/dev-buddy/items'", server.indexOf("app.post('/api/dev-buddy/actions/dnceng-task'")));
   const desktop = readFileSync(path.join(process.cwd(), 'desktop', 'src-tauri', 'src', 'main.rs'), 'utf8');
   const desktopPermissions = readFileSync(
     path.join(process.cwd(), 'desktop', 'src-tauri', 'permissions', 'app-commands.toml'),
@@ -31,10 +35,13 @@ await t.test('work UI uses a compact list-detail workspace and one completion ac
   t.ok(/id="previewTabs"/.test(html) &&
     /data-preview-tab="\$\{key\}"/.test(html) &&
     /dev-buddy-preview-tab/.test(html) &&
+    /all: \{ label: 'All', entries: all \}/.test(html) &&
+    /const seen = new Set\(\)/.test(html) &&
+    /\['all', 'attention', 'starred', 'ongoing'\]/.test(html) &&
     /current\.entries\.map\(renderItem\)/.test(html),
-  'quick To-do list separates attention, starred, and ongoing work into remembered tabs');
+  'quick To-do list provides a deduplicated All view plus remembered attention, starred, and ongoing tabs');
   t.ok(/repeat\(var\(--preview-action-count\), max-content\)/.test(html) &&
-    /--preview-action-count: \$\{3 \+ Number\(item\.priority !== 'low'\) \+ Number\(!!item\.link\) \+ Number\(!!item\.route\)\}/.test(html),
+    /--preview-action-count: \$\{4 \+ Number\(item\.priority !== 'low'\) \+ Number\(!!item\.link\) \+ Number\(!!item\.route\)\}/.test(html),
   'quick To-do rows size their action grid dynamically so controls remain on one line');
   t.ok(/data-action="open-source"/.test(html) &&
     /data-action="open-office"/.test(html) &&
@@ -43,9 +50,28 @@ await t.test('work UI uses a compact list-detail workspace and one completion ac
     /openItem\(item, 'source'\)/.test(html) &&
     /openItem\(item, 'office'\)/.test(html),
   'source URLs and TheOffice.AI routes have distinct actions in full and quick views');
-  t.ok(/function resetPeekAfterAction\(\)/.test(html) &&
-    /if \(action === 'done'\) await resetPeekAfterAction\(\)/.test(html),
-  'completing a quick-view item resets the native peek window for its next opening');
+  t.ok(!/resetPeekAfterAction/.test(html) &&
+    /await handleWorkAction\(action, item, listRow, row\)/.test(html),
+  'quick-view actions keep the flyout open until Pixel is clicked again');
+  t.ok(/data-preview-action="\$\{createdWorkItem \? 'open-dnceng-task' : 'create-dnceng-task'\}"/.test(html) &&
+    /'Task\+'/.test(html) &&
+    /class="preview-task-status"/.test(html) &&
+    /dncengTaskStatus\.set\(item\.id, \{/.test(html) &&
+    /\/api\/dev-buddy\/actions\/dnceng-task/.test(html) &&
+    /createdDncengTasks\.set\(item\.id/.test(html) &&
+    /\/api\/open-external/.test(html) &&
+    /app\.post\('\/api\/dev-buddy\/actions\/dnceng-task'/.test(server) &&
+    /azdo\.getCurrentUser\('dnceng'\)/.test(server) &&
+    /areaPath: 'internal\\\\\.NET Engineering Services'/.test(server) &&
+    /iterationPath: 'internal\\\\\.NET Engineering Services'/.test(server) &&
+    !/state:/.test(dncengTaskRoute) &&
+    !/sourceUrl: item\.link/.test(html) &&
+    !/Created from Pixel quick navigation/.test(dncengTaskRoute),
+  'quick navigation creates an assigned DNCEng task in its default state and opens the resulting work item');
+  t.ok(/kill_node_under\(node_dir\)/.test(desktop) &&
+    /process\.stdin\.once\('end', \(\) => shutdown\('desktop parent exited'\)\)/.test(server) &&
+    !/falling back to an ephemeral port/.test(server),
+  'desktop startup reclaims orphaned sidecars without changing the preference-storage origin');
   t.ok(/function renderWorkNotes\(item\)/.test(html) &&
     /function renderNotesMarkdown\(markdown, interactiveTasks = true\)/.test(html) &&
     /data-note-task-line/.test(html) &&
@@ -56,9 +82,17 @@ await t.test('work UI uses a compact list-detail workspace and one completion ac
     /renderNotesMarkdown\(section\.text, false\)/.test(html) &&
     /interactiveTasks \? `data-note-task-line/.test(html),
   'rich source context safely renders Markdown without turning source checkboxes into editable notes');
-  t.ok(/"peek"\s*=>\s*\(peek_width\.unwrap_or\(400\)\.clamp\(340,\s*720\),\s*u32::MAX\)/.test(desktop) &&
-    /max-height:\s*calc\(100vh - var\(--buddy-top\) - 242px\)/.test(html),
-  'quick view uses the available monitor height');
+  t.ok(/function renderSafeInlineStyle\(element\)/.test(html) &&
+    /document\.createElement\('template'\)/.test(html) &&
+    /renderNoteInline\(entry\.title \|\| ''\)/.test(html) &&
+    /renderNoteInline\(entry\.detail\)/.test(html) &&
+    /javascript:\/i\.test\(value\)/.test(html),
+  'source context renders Markdown and constrained inline HTML without unsafe styles or attributes');
+  t.ok(/peek_height\.unwrap_or\(640\)\.clamp\(260, 1200\)/.test(desktop) &&
+    /function measurePeekHeight\(\)/.test(html) &&
+    /176 \+ headerHeight \+ tabsHeight \+ listHeight/.test(html) &&
+    /setMode\('peek', currentPeekWidth\(\), null, measurePeekHeight\(\)\)/.test(html),
+  'quick view sizes its native window to visible content instead of blocking the full monitor');
   t.ok(/const pendingStarStates = new Map\(\)/.test(html) &&
     /const pendingOngoingStates = new Map\(\)/.test(html) &&
     /const pendingPriorityStates = new Map\(\)/.test(html) &&
@@ -71,6 +105,12 @@ await t.test('work UI uses a compact list-detail workspace and one completion ac
     /"minimize_dev_buddy"/.test(desktopPermissions) &&
     /set_skip_taskbar\(false\)/.test(desktop),
   'Pixel exposes conventional hover minimize and close controls on the character');
+  t.ok(/class="mouth"/.test(html) &&
+    !/\.eye::after/.test(html) &&
+    /\.buddy\[data-mood="happy"\] \.mouth/.test(html) &&
+    !/\.buddy\[data-mood="attentive"\] \.screen::before/.test(html) &&
+    /\.buddy\[data-mood="overloaded"\] \.mouth/.test(html),
+  'Pixel uses the soft-classic face without highlights or angry mood eyebrows');
   t.ok(!/id="quickPixel"/.test(html) &&
     !/id="fullPixel"/.test(html) &&
     /toggleQuickView\(\)/.test(html) &&
@@ -116,6 +156,9 @@ await t.test('work UI uses a compact list-detail workspace and one completion ac
     /if \(shouldHide && !embedded\)/.test(html) &&
     /id="embeddedLoading" hidden>Loading ToDo\.AI/.test(html) &&
     /if \(embedded\) \{[\s\S]{0,220}\$\('panel'\)\.classList\.add\('open'\)/.test(html) &&
+    /const themeTokens = \[/.test(html) &&
+    /window\.parent\.getComputedStyle\(hostRoot\)/.test(html) &&
+    /observer\.observe\(hostRoot/.test(html) &&
     /load\(false\)\.then/.test(html) &&
     /route === 'todo-ai'/.test(app) &&
     /dev-buddy\.html\?embedded=1&item=/.test(app) &&
@@ -130,6 +173,7 @@ await t.test('work UI uses a compact list-detail workspace and one completion ac
     /function automaticPeekWidth/.test(html) &&
     /dev-buddy-peek-width-mode/.test(html) &&
     /peek_width: Option<u32>/.test(desktop) &&
+    /peek_height: Option<u32>/.test(desktop) &&
     /set_resizable\(mode != "peek" && mode != "scratchpad"\)/.test(desktop) &&
     !/"start_dev_buddy_resize"/.test(desktopPermissions),
   'the quick view offers persistent narrower, auto-width, and wider controls instead of manual edge resizing');
@@ -294,7 +338,7 @@ await t.test('mood reflects attention and day pressure', () => {
   t.eq(buddy.deriveMood({}).id, 'calm', 'quiet state is calm');
   t.eq(buddy.deriveMood({ tracking: 1 }).id, 'focused', 'active work produces a focused mood');
   t.eq(buddy.deriveMood({ tracking: 1, completedToday: 1, lastCompletedAt: new Date().toISOString() }).id, 'happy', 'a recent completion produces a happy mood');
-  t.eq(buddy.deriveMood({ attention: 1, day: { pressure: 7 } }).id, 'concerned', 'attention plus a busy day produces concern');
+  t.eq(buddy.deriveMood({ attention: 1, day: { pressure: 7 } }).id, 'attentive', 'attention plus a busy day produces a friendly heads-up');
   t.eq(buddy.deriveMood({ attention: 3 }).id, 'overloaded', 'several urgent items produce an overloaded mood');
   t.eq(buddy.deriveMood({ day: { conflicts: 1 } }).id, 'overloaded', 'an agenda conflict produces an overloaded mood');
 });

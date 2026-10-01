@@ -6,10 +6,64 @@
   <title>Dev Buddy</title>
   <script>
     (() => {
-      const param = new URLSearchParams(window.location.search).get("scoutTheme");
-      const theme =
-        param || (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
-      document.documentElement.setAttribute("data-theme", theme);
+      const root = document.documentElement;
+      const params = new URLSearchParams(window.location.search);
+      const embedded = params.get("embedded") === "1";
+      const themeTokens = [
+        "--cp-radius-scale",
+        "--font-sans", "--font-mono", "--radius-sm", "--radius-md", "--radius-lg", "--card-shadow",
+        "--cp-bg", "--cp-bg-elevated", "--cp-surface", "--cp-surface-soft",
+        "--cp-border", "--cp-border-strong",
+        "--cp-text", "--cp-text-muted", "--cp-text-soft",
+        "--cp-accent", "--cp-accent-hover", "--cp-accent-soft", "--cp-accent-fg",
+        "--cp-success", "--cp-danger", "--cp-warning", "--cp-link",
+        "--cp-shadow", "--cp-overlay", "--cp-panel", "--cp-panel-strong",
+        "--cp-sheen", "--cp-highlight"
+      ];
+      const appearanceAttributes = ["data-theme", "data-appearance", "data-corners", "data-iconset"];
+
+      const syncHostAppearance = () => {
+        if (!embedded || window.parent === window) return false;
+        try {
+          const hostRoot = window.parent.document.documentElement;
+          const hostStyle = window.parent.getComputedStyle(hostRoot);
+          for (const name of themeTokens) {
+            const value = hostStyle.getPropertyValue(name).trim();
+            if (value) root.style.setProperty(name, value);
+          }
+          for (const name of appearanceAttributes) {
+            const value = hostRoot.getAttribute(name);
+            if (value) root.setAttribute(name, value);
+            else root.removeAttribute(name);
+          }
+          return true;
+        } catch {
+          return false;
+        }
+      };
+
+      if (!syncHostAppearance()) {
+        let theme = params.get("scoutTheme");
+        if (!theme) {
+          try { theme = localStorage.getItem("cp-theme"); } catch {}
+        }
+        if (!theme || theme === "system") {
+          theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+        }
+        root.setAttribute("data-theme", theme === "dark" ? "dark" : "light");
+      }
+
+      if (embedded && window.parent !== window) {
+        try {
+          const hostRoot = window.parent.document.documentElement;
+          const observer = new MutationObserver(syncHostAppearance);
+          observer.observe(hostRoot, {
+            attributes: true,
+            attributeFilter: appearanceAttributes,
+          });
+          window.addEventListener("pagehide", () => observer.disconnect(), { once: true });
+        } catch {}
+      }
     })();
   </script>
   <style>
@@ -77,7 +131,7 @@
       overflow: hidden;
       background: var(--cp-clear);
       color: var(--cp-text);
-      font-family: "Segoe UI", Aptos, Calibri, -apple-system, BlinkMacSystemFont, sans-serif;
+      font-family: var(--font-sans, "Segoe UI", Aptos, Calibri, -apple-system, BlinkMacSystemFont, sans-serif);
       user-select: none;
     }
     button, input { font: inherit; }
@@ -166,26 +220,43 @@
       border-radius: 50%;
       background: var(--cp-text);
       animation: blink 5.5s infinite;
+      transition: width .2s ease, height .2s ease, top .2s ease;
     }
     .eye.left { left: 17px; }
     .eye.right { right: 17px; }
-    .buddy[data-mood="focused"] .eye { height: 9px; top: 20px; }
+    .mouth {
+      position: absolute;
+      left: 50%;
+      bottom: 7px;
+      width: 20px;
+      height: 8px;
+      border-bottom: 3px solid var(--cp-text);
+      border-radius: 0 0 18px 18px;
+      transform: translateX(-50%);
+      transition: width .2s ease, height .2s ease, border .2s ease, border-radius .2s ease;
+    }
+    .buddy[data-mood="focused"] .eye { width: 9px; height: 11px; top: 19px; }
+    .buddy[data-mood="focused"] .mouth,
+    .buddy[data-mood="attentive"] .mouth {
+      width: 16px;
+      height: 6px;
+    }
     .buddy[data-mood="happy"] {
       animation: buddy-happy 1.5s ease-in-out infinite;
     }
     .buddy[data-mood="happy"] .antenna::before { background: var(--cp-success); }
-    .buddy[data-mood="concerned"] .screen::before,
-    .buddy[data-mood="concerned"] .screen::after,
-    .buddy[data-mood="overloaded"] .screen::before,
-    .buddy[data-mood="overloaded"] .screen::after { opacity: 1; }
-    .buddy[data-mood="concerned"] .screen::before,
-    .buddy[data-mood="overloaded"] .screen::before { transform: rotate(14deg); }
-    .buddy[data-mood="concerned"] .screen::after,
-    .buddy[data-mood="overloaded"] .screen::after { transform: rotate(-14deg); }
+    .buddy[data-mood="happy"] .eye { height: 9px; top: 20px; }
+    .buddy[data-mood="happy"] .mouth { width: 26px; height: 11px; }
     .buddy[data-mood="overloaded"] {
       animation: buddy-hustle 1.2s ease-in-out infinite;
     }
     .buddy[data-mood="overloaded"] .eye { height: 15px; top: 16px; }
+    .buddy[data-mood="overloaded"] .mouth {
+      width: 14px;
+      height: 7px;
+      border: 2px solid var(--cp-text);
+      border-radius: 50%;
+    }
     .buddy[data-mood="overloaded"] .attention-dot { background: var(--cp-danger); }
     .body {
       --tummy-urgency: var(--cp-accent);
@@ -1578,6 +1649,10 @@
       bottom: calc(100% - var(--buddy-top) + 2px);
     }
     .hover-preview.show { display: block; animation: panel-in .16s ease-out; }
+    .hover-preview.measuring {
+      visibility: hidden;
+      animation: none;
+    }
     .hover-preview-head {
       display: flex;
       align-items: center;
@@ -1683,6 +1758,15 @@
     .preview-item[data-urgency="low"] { --urgency-color: var(--cp-success); }
     .preview-item.starred { background: var(--cp-highlight); }
     .preview-item:last-child { border-bottom: 0; }
+    .preview-task-status {
+      grid-column: 1 / -1;
+      margin-top: -2px;
+      color: var(--cp-text-muted);
+      font-size: 11px;
+      line-height: 1.35;
+    }
+    .preview-task-status[data-state="error"] { color: var(--cp-danger); }
+    .preview-task-status[data-state="done"] { color: var(--cp-success); }
     .preview-read {
       min-width: 0;
       padding: 0;
@@ -2405,6 +2489,7 @@
         <span class="screen">
           <span class="eye left"></span>
           <span class="eye right"></span>
+          <span class="mouth"></span>
         </span>
       </span>
       <span class="buddy-arm-action left" aria-hidden="true">
@@ -2450,6 +2535,7 @@
       let snoozeWakeAt = 0;
       let closeTimer = null;
       let peekTimer = null;
+      let peekResizeTimer = null;
       let peekOpen = false;
       let lastFingerprint = '';
       let manipulatingWindow = false;
@@ -2463,7 +2549,7 @@
       let currentView = localStorage.getItem('dev-buddy-view') || 'work';
       let workSort = localStorage.getItem('dev-buddy-work-sort') || 'urgency';
       let selectedItemId = localStorage.getItem('dev-buddy-selected-item') || '';
-      let previewTab = localStorage.getItem('dev-buddy-preview-tab') || 'attention';
+      let previewTab = localStorage.getItem('dev-buddy-preview-tab') || 'all';
       let peekWidthMode = localStorage.getItem('dev-buddy-peek-width-mode') || 'auto';
       let customPeekWidth = Number(localStorage.getItem('dev-buddy-peek-width')) || 520;
       let collapsedWorkSections = new Set();
@@ -2478,6 +2564,15 @@
       const pendingStarStates = new Map();
       const pendingOngoingStates = new Map();
       const pendingPriorityStates = new Map();
+      const dncengTaskStatus = new Map();
+      const createdDncengTasks = (() => {
+        try {
+          const saved = JSON.parse(localStorage.getItem('dev-buddy-dnceng-tasks') || '{}');
+          return new Map(Object.entries(saved && typeof saved === 'object' ? saved : {}));
+        } catch {
+          return new Map();
+        }
+      })();
       const detailInsights = new Map();
       const detailContexts = new Map();
       const detailTabs = new Map();
@@ -2550,7 +2645,9 @@
 
       function automaticPeekWidth(items = status?.list || []) {
         const sorted = sortedWorkItems(items);
-        const entries = previewTab === 'starred'
+        const entries = previewTab === 'all'
+          ? [...new Map(sorted.map(item => [item.id, item])).values()]
+          : previewTab === 'starred'
           ? sorted.filter(item => item.starred)
           : previewTab === 'ongoing'
             ? sorted.filter(item => item.ongoing)
@@ -2569,12 +2666,15 @@
           : Math.max(340, Math.min(720, customPeekWidth));
       }
 
-      async function setMode(mode, requestedPeekWidth = null, requestedScratchpadHeight = null) {
+      async function setMode(mode, requestedPeekWidth = null, requestedScratchpadHeight = null, requestedPeekHeight = null) {
         if (embedded) return;
         const fn = invoke();
         if (!fn) return;
         const peekWidth = mode === 'peek'
           ? Math.round(requestedPeekWidth || currentPeekWidth())
+          : null;
+        const peekHeight = mode === 'peek'
+          ? Math.round(requestedPeekHeight || measurePeekHeight())
           : null;
         const scratchpadHeight = mode === 'scratchpad'
           ? Math.round(requestedScratchpadHeight || 560)
@@ -2583,6 +2683,7 @@
           const plan = await fn('plan_dev_buddy_mode', {
             mode,
             peekWidth,
+            peekHeight,
             scratchpadHeight,
             buddyLeft: windowPlacement.buddyLeft,
             buddyTop: windowPlacement.buddyTop,
@@ -2593,6 +2694,7 @@
           applyWindowPlacement(await fn('set_dev_buddy_mode', {
             mode,
             peekWidth,
+            peekHeight,
             scratchpadHeight,
             anchorX: plan.anchorPhysicalX,
             anchorY: plan.anchorPhysicalY,
@@ -2602,6 +2704,7 @@
             applyWindowPlacement(await fn('set_dev_buddy_mode', {
               mode,
               peekWidth,
+              peekHeight,
               scratchpadHeight,
             }));
           } catch (_) {}
@@ -2616,6 +2719,54 @@
         const data = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(data.error || `Request failed (${response.status})`);
         return data;
+      }
+
+      function saveCreatedDncengTasks() {
+        try {
+          localStorage.setItem('dev-buddy-dnceng-tasks', JSON.stringify(Object.fromEntries(createdDncengTasks)));
+        } catch {}
+      }
+
+      async function createDncengTask(item, button) {
+        if (!item || !button || button.disabled) return;
+        button.disabled = true;
+        button.textContent = '…';
+        dncengTaskStatus.set(item.id, { state: 'working', text: 'Creating Azure DevOps task…' });
+        renderPreview(status?.list || []);
+        let created;
+        try {
+          const result = await request('/api/dev-buddy/actions/dnceng-task', {
+            method: 'POST',
+            body: JSON.stringify({
+              title: item.title || 'Pixel work item',
+              detail: item.detail || item.summary || '',
+            }),
+          });
+          created = result && result.workItem;
+          if (!created || !created.id || !created.url) throw new Error('Azure DevOps did not return the created task.');
+        } catch (error) {
+          dncengTaskStatus.set(item.id, {
+            state: 'error',
+            text: error.message || 'Pixel could not create the Azure DevOps task.'
+          });
+          renderPreview(status?.list || []);
+          return;
+        }
+        createdDncengTasks.set(item.id, { id: created.id, url: created.url });
+        saveCreatedDncengTasks();
+        dncengTaskStatus.set(item.id, { state: 'done', text: `Created task #${created.id}. Opening it now…` });
+        renderPreview(status?.list || []);
+        try {
+          await request('/api/open-external', {
+            method: 'POST',
+            body: JSON.stringify({ url: created.url }),
+          });
+          dncengTaskStatus.set(item.id, { state: 'done', text: `Task #${created.id} created. Click #${created.id} to reopen it.` });
+          renderPreview(status?.list || []);
+        } catch {
+          dncengTaskStatus.set(item.id, { state: 'error', text: `Task #${created.id} was created, but could not be opened. Click #${created.id} to retry.` });
+          renderPreview(status?.list || []);
+        }
       }
 
       function optimisticMerge(sourceId, targetId, mergedEffort) {
@@ -2663,7 +2814,7 @@
         })[char]);
       }
 
-      function renderNoteInline(value) {
+      function renderMarkdownInline(value) {
         return escapeHtml(value)
           .replace(/`([^`]+)`/g, '<code>$1</code>')
           .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
@@ -2672,6 +2823,54 @@
           .replace(/_([^_]+)_/g, '<em>$1</em>')
           .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g,
             '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+      }
+
+      function renderSafeInlineStyle(element) {
+        const allowed = [
+          'color', 'border', 'border-color', 'border-style', 'border-width',
+          'border-left', 'border-left-color', 'border-left-style', 'border-left-width',
+          'padding', 'padding-left', 'padding-right', 'font-size', 'font-weight',
+          'font-style', 'text-decoration', 'margin-left', 'margin-right',
+        ];
+        return allowed.flatMap(property => {
+          const value = element.style.getPropertyValue(property).trim();
+          if (!value || /url\s*\(|expression\s*\(|javascript:/i.test(value)) return [];
+          return `${property}: ${value}`;
+        }).join('; ');
+      }
+
+      function renderNoteInline(value) {
+        const source = String(value || '');
+        if (!source.includes('<')) return renderMarkdownInline(source);
+        const template = document.createElement('template');
+        template.innerHTML = source;
+        const renderNode = (node, markdown = true) => {
+          if (node.nodeType === Node.TEXT_NODE) {
+            return markdown ? renderMarkdownInline(node.nodeValue || '') : escapeHtml(node.nodeValue || '');
+          }
+          if (node.nodeType !== Node.ELEMENT_NODE) return '';
+          const tag = node.tagName.toLowerCase();
+          const children = Array.from(node.childNodes)
+            .map(child => renderNode(child, tag !== 'code'))
+            .join('');
+          if (tag === 'br') return '<br>';
+          if (['strong', 'b', 'em', 'i', 'code', 's', 'del', 'u'].includes(tag)) {
+            return `<${tag}>${children}</${tag}>`;
+          }
+          if (tag === 'span') {
+            const style = renderSafeInlineStyle(node);
+            return `<span${style ? ` style="${escapeHtml(style)}"` : ''}>${children}</span>`;
+          }
+          if (tag === 'a') {
+            const href = String(node.getAttribute('href') || '').trim();
+            const safeHref = /^https?:\/\//i.test(href) ? href : '';
+            return safeHref
+              ? `<a href="${escapeHtml(safeHref)}" target="_blank" rel="noopener noreferrer">${children}</a>`
+              : children;
+          }
+          return children;
+        };
+        return Array.from(template.content.childNodes).map(node => renderNode(node)).join('');
       }
 
       function renderNotesMarkdown(markdown, interactiveTasks = true) {
@@ -3069,8 +3268,8 @@
       function renderContextRows(items) {
         return (items || []).map(entry => `
           <div class="context-row" data-state="${escapeHtml(entry.state || 'neutral')}">
-            <div class="context-row-title">${escapeHtml(entry.title || '')}</div>
-            ${entry.detail ? `<div class="context-row-detail">${escapeHtml(entry.detail)}</div>` : ''}
+            <div class="context-row-title">${renderNoteInline(entry.title || '')}</div>
+            ${entry.detail ? `<div class="context-row-detail">${renderNoteInline(entry.detail)}</div>` : ''}
             ${entry.url ? `<button class="context-row-link" type="button" data-context-url="${escapeHtml(entry.url)}">Open evidence</button>` : ''}
             ${entry.canMarkUnrelated && entry.observationKey
               ? `<button class="context-row-link" type="button" data-evidence-unrelated="${escapeHtml(entry.observationKey)}">Not related</button>`
@@ -3293,14 +3492,25 @@
         const ongoing = sorted.filter(item => item.ongoing)
           .sort((a, b) => Number(b.starred === true) - Number(a.starred === true) ||
             itemArrival(b) - itemArrival(a));
+        const included = new Set([...active, ...starred, ...ongoing].map(item => item.id));
+        const seen = new Set();
+        const all = sorted.filter(item => {
+          if (!included.has(item.id) || seen.has(item.id)) return false;
+          seen.add(item.id);
+          return true;
+        });
         const groups = {
+          all: { label: 'All', entries: all },
           attention: { label: 'Needs attention', entries: active },
           starred: { label: 'Starred', entries: starred },
           ongoing: { label: 'Ongoing', entries: ongoing },
         };
-        if (!groups[previewTab]) previewTab = 'attention';
-        const renderItem = item => `
-          <div class="preview-item ${item.starred ? 'starred' : ''} ${item.ongoing ? 'ongoing' : ''}" style="--preview-action-count: ${3 + Number(item.priority !== 'low') + Number(!!item.link) + Number(!!item.route)}" data-preview-id="${escapeHtml(item.id)}" data-urgency="${escapeHtml(item.urgency?.level || 'medium')}">
+        if (!groups[previewTab]) previewTab = 'all';
+        const renderItem = item => {
+          const createdWorkItem = createdDncengTasks.get(item.id);
+          const taskStatus = dncengTaskStatus.get(item.id);
+          return `
+          <div class="preview-item ${item.starred ? 'starred' : ''} ${item.ongoing ? 'ongoing' : ''}" style="--preview-action-count: ${4 + Number(item.priority !== 'low') + Number(!!item.link) + Number(!!item.route)}" data-preview-id="${escapeHtml(item.id)}" data-urgency="${escapeHtml(item.urgency?.level || 'medium')}">
             <button class="preview-read" type="button" data-preview-action="read">
               <div class="preview-title">${escapeHtml(item.title)}</div>
               <div class="preview-meta">${item.ongoing ? 'Ongoing · acknowledged' : `${escapeHtml(item.urgency?.label || 'Medium')} · ${escapeHtml(urgencyScore(item))}`} · ${escapeHtml(formatArrivalTime(item))}</div>
@@ -3310,8 +3520,11 @@
             ${item.priority !== 'low' ? '<button class="quick-action quick-lower" type="button" data-preview-action="priority-down" aria-label="Lower priority" title="Lower priority">↓</button>' : ''}
             ${item.link ? '<button class="quick-action" type="button" data-preview-action="open-source" aria-label="Open source" title="Open source">↗</button>' : ''}
             ${item.route ? '<button class="quick-action quick-office" type="button" data-preview-action="open-office" aria-label="Open in TheOffice.AI" title="Open in TheOffice.AI">AI</button>' : ''}
+            <button class="quick-action quick-work-item" type="button" data-preview-action="${createdWorkItem ? 'open-dnceng-task' : 'create-dnceng-task'}" aria-label="${createdWorkItem ? `Open Azure DevOps task ${escapeHtml(createdWorkItem.id)}` : 'Create Azure DevOps task'}" title="${createdWorkItem ? `Open Azure DevOps task #${escapeHtml(createdWorkItem.id)}` : 'Create an assigned task in dnceng/internal'}">${createdWorkItem ? `#${escapeHtml(createdWorkItem.id)}` : 'Task+'}</button>
             <button class="quick-action quick-done" type="button" data-preview-action="done" aria-label="Mark done" title="Mark done">✓</button>
+            ${taskStatus ? `<div class="preview-task-status" data-state="${escapeHtml(taskStatus.state)}">${escapeHtml(taskStatus.text)}</div>` : ''}
           </div>`;
+        };
         $('previewTabs').innerHTML = Object.entries(groups).map(([key, group]) => `
           <button class="preview-tab" type="button" role="tab" data-preview-tab="${key}" aria-selected="${key === previewTab ? 'true' : 'false'}">
             ${group.label}<span class="preview-tab-count">${group.entries.length}</span>
@@ -3321,6 +3534,7 @@
           ? current.entries.map(renderItem).join('')
           : `<div class="empty">No ${current.label.toLowerCase()} items.</div>`;
         $('peekAutoWidth').classList.toggle('active', peekWidthMode === 'auto');
+        if (peekOpen) schedulePeekResize();
       }
 
       function refreshBuddyUrgency(items) {
@@ -3337,7 +3551,7 @@
 
       function render() {
         const settings = status?.settings || {};
-        const mood = status?.mood || { id: 'calm', label: 'Calm', detail: 'Keeping the loose ends together.' };
+        const mood = status?.mood || { id: 'calm', label: 'Ready', detail: 'I am here and keeping an eye on things.' };
         const day = status?.day || {};
         $('panelTitle').textContent = settings.name || 'Pixel';
         $('panelSub').textContent = `${mood.label}${day.hasAgenda ? ` · ${day.label}` : ''}`;
@@ -4042,26 +4256,42 @@
         if (panelOpen || manipulatingWindow || buddyGesture) return;
         clearTimeout(peekTimer);
         hideBubble();
-        peekOpen = true;
         renderPreview(status?.list || []);
-        await setMode('peek', currentPeekWidth());
+        const peekHeight = measurePeekHeight();
+        peekOpen = true;
+        await setMode('peek', currentPeekWidth(), null, peekHeight);
         if (peekOpen && !panelOpen) $('hoverPreview').classList.add('show');
       }
 
       async function hidePeek() {
         clearTimeout(peekTimer);
+        clearTimeout(peekResizeTimer);
         if (!peekOpen) return;
         peekOpen = false;
         $('hoverPreview').classList.remove('show');
         if (!panelOpen) await setMode('idle');
       }
 
-      async function resetPeekAfterAction() {
-        clearTimeout(peekTimer);
-        clearTimeout(closeTimer);
-        peekOpen = false;
-        $('hoverPreview').classList.remove('show');
-        if (!panelOpen) await setMode('idle');
+      function measurePeekHeight() {
+        const preview = $('hoverPreview');
+        const alreadyShown = preview.classList.contains('show');
+        preview.classList.add('show', 'measuring');
+        const headerHeight = preview.querySelector('.hover-preview-head')?.offsetHeight || 48;
+        const tabsHeight = $('previewTabs').offsetHeight || 36;
+        const listHeight = $('previewList').scrollHeight || 48;
+        preview.classList.remove('measuring');
+        if (!alreadyShown) preview.classList.remove('show');
+        return Math.max(260, Math.min(1200, 176 + headerHeight + tabsHeight + listHeight));
+      }
+
+      function schedulePeekResize(delay = 0) {
+        if (!peekOpen || embedded) return;
+        clearTimeout(peekResizeTimer);
+        peekResizeTimer = setTimeout(() => {
+          if (peekOpen && !panelOpen) {
+            setMode('peek', currentPeekWidth(), null, measurePeekHeight());
+          }
+        }, delay);
       }
 
       async function beginWindowAction(command) {
@@ -4324,7 +4554,6 @@
         }
         localStorage.setItem('dev-buddy-peek-width-mode', peekWidthMode);
         renderPreview(status?.list || []);
-        if (peekOpen) await setMode('peek', currentPeekWidth());
       }
       $('peekNarrower').addEventListener('click', () => changePeekWidth('narrower'));
       $('peekAutoWidth').addEventListener('click', () => changePeekWidth('auto'));
@@ -5049,7 +5278,7 @@
 
       $('previewTabs').addEventListener('click', event => {
         const tab = event.target.closest('[data-preview-tab]')?.dataset.previewTab;
-        if (!['attention', 'starred', 'ongoing'].includes(tab)) return;
+        if (!['all', 'attention', 'starred', 'ongoing'].includes(tab)) return;
         previewTab = tab;
         localStorage.setItem('dev-buddy-preview-tab', previewTab);
         renderPreview(status?.list || []);
@@ -5065,11 +5294,26 @@
           localStorage.setItem('dev-buddy-selected-item', selectedItemId);
           currentView = 'work';
           await openTodoAi(item.id);
-          await resetPeekAfterAction();
           return;
         }
         if (action === 'open-source' || action === 'open-office') {
           return openItem(item, action === 'open-source' ? 'source' : 'office');
+        }
+        if (action === 'create-dnceng-task') {
+          return createDncengTask(item, event.target.closest('[data-preview-action]'));
+        }
+        if (action === 'open-dnceng-task') {
+          const created = createdDncengTasks.get(item.id);
+          if (created && created.url) {
+            return request('/api/open-external', {
+              method: 'POST',
+              body: JSON.stringify({ url: created.url }),
+            });
+          }
+          createdDncengTasks.delete(item.id);
+          saveCreatedDncengTasks();
+          renderPreview(status?.list || []);
+          return;
         }
         if (['done', 'star', 'ongoing', 'priority-down'].includes(action)) {
           const listRow = $('itemList').querySelector(`[data-id="${CSS.escape(item.id)}"]`);
@@ -5077,8 +5321,6 @@
             await handleWorkAction(action, item, listRow, row);
           } catch (error) {
             showOperationStatus(error.message || 'Pixel could not update that item.', 'error', 3500);
-          } finally {
-            if (action === 'done') await resetPeekAfterAction();
           }
         }
       });
