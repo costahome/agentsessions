@@ -6340,21 +6340,48 @@ function _cfIsCompletedReviewResponse(output) {
     'The AI review completed, but no machine-readable findings were recovered.';
 }
 
+function _cfRenderRecoveredMarkdown(markdown) {
+  const { marked, Renderer } = require('marked');
+  const esc = (v) => String(v == null ? '' : v)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  const renderer = new Renderer();
+  renderer.html = (token) => esc(token && (token.text || token.raw) || '');
+  renderer.link = function (token) {
+    const href = String(token && token.href || '').trim();
+    const label = this.parser.parseInline(token && token.tokens || []);
+    if (!/^(?:https?:|mailto:|#)/i.test(href)) return label;
+    const title = token.title ? ` title="${esc(token.title)}"` : '';
+    return `<a href="${esc(href)}"${title} target="_blank" rel="noopener noreferrer">${label}</a>`;
+  };
+  renderer.image = (token) => `<span class="image-note">[Image: ${esc(token && token.text || 'review attachment')}]</span>`;
+  return marked.parse(String(markdown || ''), { renderer, gfm: true });
+}
+
 function _cfWriteRecoveredReviewReport(wtPath, pr, output) {
   const esc = (v) => String(v == null ? '' : v)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   let body = String(output || '').trim();
   if (!body) return false;
   if (body.length > 1000000) body = body.slice(0, 500000) + '\n\n… output clipped …\n\n' + body.slice(-500000);
-  const html = '<!doctype html><html><head><meta charset="utf-8"><title>Recovered PR review</title>' +
-    '<style>body{font:14px/1.55 system-ui,sans-serif;max-width:1180px;margin:32px auto;padding:0 24px}' +
-    '.verdict{border-left:4px solid #2f81f7;padding:14px 16px;background:#2f81f718}' +
-    'pre{white-space:pre-wrap;overflow-wrap:anywhere;border:1px solid #8885;padding:16px;border-radius:8px;font:12px/1.55 ui-monospace,monospace}</style></head><body>' +
-    '<div class="verdict recovered"><h1>AI review response recovered</h1><p>The reviewer returned a complete response but did not save its requested files. The system preserved that response automatically; read its verdict and findings below.</p></div>' +
-    '<h2>Pull request</h2><p><strong>#' + esc(pr.id) + '</strong> ' + esc(pr.title || '') + '</p>' +
-    (pr.url ? '<p><a href="' + esc(pr.url) + '">Open pull request</a></p>' : '') +
-    '<h2>Recovered review response</h2><pre>' + esc(body) + '</pre>' +
-    '<p class="meta">Recovered ' + esc(new Date().toISOString()) + '</p></body></html>';
+  const rendered = _cfRenderRecoveredMarkdown(body);
+  const html = `<!doctype html><html data-cp-themed><head><script>
+  (() => {
+    const param = new URLSearchParams(window.location.search).get("scoutTheme");
+    const theme =
+      param || (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+    document.documentElement.setAttribute("data-theme", theme);
+  })();
+</script><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Recovered PR review</title><style>
+:root{color-scheme:light;--cp-bg:#f7f4ef;--cp-bg-elevated:#fcfbf8;--cp-surface:#fff;--cp-surface-soft:#f5f5f5;--cp-border:#dedede;--cp-border-strong:#919191;--cp-text:#242424;--cp-text-muted:#5c5c5c;--cp-text-soft:#6f6f6f;--cp-accent:#b11f4b;--cp-accent-hover:#9a1a41;--cp-accent-soft:rgba(177,31,75,.08);--cp-accent-fg:#fff;--cp-success:#16a34a;--cp-danger:#dc2626;--cp-warning:#f59e0b;--cp-link:#0078d4;--cp-shadow:0 18px 48px rgba(0,0,0,.12);--cp-overlay:rgba(255,255,255,.8);--cp-panel:rgba(255,255,255,.86);--cp-panel-strong:rgba(255,255,255,.96);--cp-sheen:rgba(255,255,255,.55);--cp-highlight:rgba(177,31,75,.12)}
+html[data-theme="dark"]{color-scheme:dark;--cp-bg:#3d3b3a;--cp-bg-elevated:#343231;--cp-surface:#292929;--cp-surface-soft:#2e2e2e;--cp-border:#474747;--cp-border-strong:#5f5f5f;--cp-text:#dedede;--cp-text-muted:#919191;--cp-text-soft:#b0b0b0;--cp-accent:#fd8ea1;--cp-accent-hover:#fb7b91;--cp-accent-soft:rgba(253,142,161,.14);--cp-accent-fg:#1a1a1a;--cp-success:#4ade80;--cp-danger:#f87171;--cp-warning:#fbbf24;--cp-link:#4da6ff;--cp-shadow:0 18px 48px rgba(0,0,0,.32);--cp-overlay:rgba(41,41,41,.88);--cp-panel:rgba(41,41,41,.72);--cp-panel-strong:rgba(41,41,41,.96);--cp-sheen:rgba(255,255,255,.04);--cp-highlight:rgba(253,142,161,.12)}
+*{box-sizing:border-box}body{margin:0;background:var(--cp-bg);color:var(--cp-text);font:15px/1.65 "Segoe UI",Aptos,Calibri,-apple-system,BlinkMacSystemFont,sans-serif}.page{width:min(1120px,calc(100% - 40px));margin:32px auto 56px}.recovered{padding:16px 20px;border:1px solid var(--cp-border);border-left:4px solid var(--cp-link);border-radius:10px;background:var(--cp-surface)}.recovered strong{display:block;font-size:16px}.recovered p{margin:4px 0 0;color:var(--cp-text-muted)}.pr{margin:20px 0;padding:18px 20px;border:1px solid var(--cp-border);border-radius:16px;background:var(--cp-surface);box-shadow:0 0 2px rgba(0,0,0,.12),0 1px 2px rgba(0,0,0,.14)}.eyebrow{margin:0 0 4px;color:var(--cp-text-muted);font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase}.pr-title{margin:0;font-size:20px;line-height:1.35}.pr-link{display:inline-block;margin-top:10px}.review{padding:24px 28px;border:1px solid var(--cp-border);border-radius:16px;background:var(--cp-surface);box-shadow:0 0 2px rgba(0,0,0,.12),0 1px 2px rgba(0,0,0,.14)}.review>:first-child{margin-top:0}.review>:last-child{margin-bottom:0}h1,h2,h3,h4{line-height:1.3}h1{font-size:28px}h2{margin-top:32px;padding-bottom:8px;border-bottom:1px solid var(--cp-border);font-size:22px}h3{margin-top:26px;font-size:18px}h4{font-size:16px}p,ul,ol,blockquote,pre,table{margin:14px 0}ul,ol{padding-left:26px}li+li{margin-top:5px}a{color:var(--cp-link);text-underline-offset:2px}a:hover{color:var(--cp-accent)}code,pre{font-family:Consolas,"Courier New",Courier,monospace}code{padding:2px 5px;border-radius:4px;background:var(--cp-surface-soft);font-size:.9em}pre{max-width:100%;overflow:auto;padding:16px;border:1px solid var(--cp-border);border-radius:10px;background:var(--cp-surface-soft);white-space:pre}pre code{padding:0;background:transparent}blockquote{margin-left:0;padding:4px 16px;border-left:3px solid var(--cp-accent);color:var(--cp-text-muted)}table{display:block;width:100%;overflow-x:auto;border-collapse:collapse}th,td{min-width:120px;padding:9px 12px;border:1px solid var(--cp-border);text-align:left;vertical-align:top}th{background:var(--cp-surface-soft);font-weight:650}hr{margin:28px 0;border:0;border-top:1px solid var(--cp-border)}.image-note{color:var(--cp-text-muted);font-style:italic}.meta{margin:18px 4px 0;color:var(--cp-text-muted);font-size:12px}@media(max-width:680px){.page{width:min(100% - 24px,1120px);margin-top:16px}.review{padding:18px 16px}h1{font-size:24px}h2{font-size:20px}}
+</style></head><body><main class="page">
+<aside class="recovered"><strong>Recovered review</strong><p>The reviewer completed its analysis but did not save the requested report file. Code Flow recovered and formatted the response below.</p></aside>
+<section class="pr"><p class="eyebrow">Pull request</p><h1 class="pr-title">#${esc(pr.id)} ${esc(pr.title || '')}</h1>
+${pr.url ? `<a class="pr-link" href="${esc(pr.url)}" target="_blank" rel="noopener noreferrer">Open pull request</a>` : ''}</section>
+<article class="review">${rendered}</article>
+<p class="meta">Recovered ${esc(new Date().toISOString())}</p></main></body></html>`;
   _cfWriteArtifactFile(wtPath, CODEFLOW_REPORT_NAME, html);
   _cfWriteArtifactFile(wtPath, CODEFLOW_COMMENTS_NAME,
     JSON.stringify(_cfRecoveredReviewComments(body), null, 2));
@@ -8094,9 +8121,26 @@ app.post('/api/codeflow/pr/dismiss', (req, res) => {
 //      review template's known skeleton (body/headings/code/tables/verdict/etc.).
 // Reports that opt into their own theming mark themselves with data-cp-themed and
 // are left untouched.
+function _upgradeLegacyRecoveredReviewHtml(html) {
+  if (!/<title>Recovered PR review<\/title>/i.test(html) ||
+      !/<h2>Recovered review response<\/h2>\s*<pre>/i.test(html)) return html;
+  const decodeEscaped = (v) => String(v || '')
+    .replace(/&quot;/g, '"').replace(/&gt;/g, '>').replace(/&lt;/g, '<').replace(/&amp;/g, '&');
+  const upgraded = html.replace(
+    /<h2>Recovered review response<\/h2>\s*<pre>([\s\S]*?)<\/pre>/i,
+    (_match, escaped) => '<h2>Recovered review response</h2><article class="review">' +
+      _cfRenderRecoveredMarkdown(decodeEscaped(escaped)) + '</article>'
+  );
+  const css = `<style id="cp-recovered-review-upgrade">
+.review>:first-child{margin-top:0}.review>:last-child{margin-bottom:0}.review h1,.review h2,.review h3,.review h4{line-height:1.3}.review h2{margin-top:30px;padding-bottom:7px;border-bottom:1px solid #8885}.review ul,.review ol{padding-left:26px}.review li+li{margin-top:5px}.review table{display:block;width:100%;overflow-x:auto;border-collapse:collapse}.review th,.review td{min-width:120px;padding:8px 11px;border:1px solid #8885;text-align:left;vertical-align:top}.review th{background:#8882}.review blockquote{margin-left:0;padding-left:15px;border-left:3px solid #8888}.review pre{max-width:100%;overflow:auto;white-space:pre}.review code{font-family:Consolas,"Courier New",Courier,monospace}
+</style>`;
+  return upgraded.replace(/<\/head>/i, css + '</head>');
+}
+
 function _themeReportHtml(html) {
   if (Buffer.isBuffer(html)) html = html.toString('utf8');
   if (typeof html !== 'string') return html;
+  html = _upgradeLegacyRecoveredReviewHtml(html);
   if (!/<html[\s>]/i.test(html) || /data-cp-themed/i.test(html)) return html;
   const detect = `<script>(function(){try{var p=new URLSearchParams(location.search).get('scoutTheme');var t=p||((window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches)?'dark':'light');document.documentElement.setAttribute('data-theme',t==='dark'?'dark':'light');}catch(e){}})();</script>`;
   const darkCss = `<style id="cp-report-theme">

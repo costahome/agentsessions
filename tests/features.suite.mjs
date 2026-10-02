@@ -554,12 +554,20 @@ await t.test('Code Flow AI review reports durable live phase and tool activity',
     /if \(!ownsAttempt\(\)\) return/.test(route) &&
     /_cfActiveReviews\.get\(key\) === activeReview/.test(route),
     'only the currently owned review attempt may publish progress, artifacts, or final state');
-  t.ok(/verdict recovered/.test(server) &&
-    /read its verdict and findings below/.test(server) &&
+  t.ok(/class="recovered"/.test(server) &&
+    /recovered and formatted the response below/.test(server) &&
     /_cfIsCompletedReviewResponse\(completedResponse\)/.test(route) &&
     server.includes('no (?:significant |actionable )?(?:issues|findings)') &&
     !/completedResponse\.length >= 200/.test(route),
     'recovered responses retain their own verdict and concise completed reviews are accepted');
+  t.ok(/function _cfRenderRecoveredMarkdown/.test(server) &&
+    /marked\.parse\(String\(markdown \|\| ''\), \{ renderer, gfm: true \}\)/.test(server) &&
+    /renderer\.html =/.test(server) &&
+  /if \(!\/\^\(\?:https\?:\|mailto:\|#\)\/i\.test\(href\)\)/.test(server) &&
+  /<article class="review">\$\{rendered\}<\/article>/.test(server) &&
+  /function _upgradeLegacyRecoveredReviewHtml/.test(server) &&
+  /html = _upgradeLegacyRecoveredReviewHtml\(html\)/.test(server),
+  'recovered review reports and existing cached reports safely render GFM headings, tables, lists, links, and code');
   t.ok(/An AI review is already running for this pull request/.test(route) &&
     /sdkRunner\.abortSession\(liveReview\.sessionId\)/.test(server) &&
     /async abortSession\(sessionId\)/.test(sdkRunner) &&
