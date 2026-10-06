@@ -6038,7 +6038,8 @@ function _cfHeadFactsBlock(pr) {
 // The review agent persona. Read-only by design: it analyzes and reports, it
 // does NOT change the PR's code or push anything.
 function _buildReviewAgentMd({ agentName, pr, workItems, worktreePath, reportName, commentsName }) {
-  const desc = 'Read-only PR review agent for ' + (pr.repo || 'repo') + ' #' + pr.id;
+  const desc = 'PR reviewer for ' + (pr.repo || 'repo') + ' #' + pr.id +
+    ' — preserves tracked PR files and writes the required untracked review artifacts';
   const fm = ['---', 'name: ' + agentName, 'description: ' + JSON.stringify(desc), '---', ''].join('\n');
   return fm + _reviewPersonaBody({ pr, workItems, reportName, commentsName });
 }
@@ -6078,7 +6079,14 @@ function _reviewPersonaBody({ pr, workItems, reportName, commentsName = CODEFLOW
   ctx.push('  git diff origin/' + (pr.targetBranch || 'main') + '...HEAD');
   ctx.push('  ```');
   ctx.push('');
-  const body = `You are a meticulous, senior **code reviewer**. You are reviewing the pull request described below. You **analyze and report only** — you do not change the PR's code, commit, or push.
+  const body = `You are a meticulous, senior **code reviewer**. You are reviewing the pull request described below. You do not change tracked PR code, commit, or push.
+
+## Required output files — explicit write permission
+This is a **non-mutating code review**, not a no-files task. You are explicitly required and authorized to create or overwrite exactly these two git-ignored, untracked output artifacts at the worktree root:
+- \`${reportName}\`
+- \`${commentsName}\`
+
+Writing those two files is part of reporting the review and does **not** count as changing the PR. Any instruction to keep the review read-only, preserve the working tree, avoid modifying repository files, or analyze/report only applies to tracked product/source/test/docs files — it does not prohibit these two required artifacts. Do not finish with only a chat response. The review is incomplete until both files are saved.
 
 ## Voice
 Write plain, direct, familiar prose — like a colleague leaving review notes, not a chatbot. No flattery, no hedging, no "great work!" / "happy to help" / "I hope this helps". Don't open with praise or apologize. Skip filler and self-narration about being an AI. State what you found and what to do; if something is wrong, say so plainly. Brevity over politeness.
@@ -7381,7 +7389,7 @@ app.post('/api/codeflow/pr/review', async (req, res) => {
         (steward ? _cfStewardAgentSlug({ ...o, id: pr.id }) : _cfReviewAgentSlug({ ...o, id: pr.id }));
       const kickoff = steward
         ? 'Tend your pull request now. Work through every step in order: understand the goals, analyze the diff, ADDRESS EVERY active reviewer comment (fix the code or draft a reply), go above and beyond to harden the change and prevent regressions, then VALIDATE by running the repo\'s existing build/lint/tests until they pass. COMMIT your changes locally (do NOT push). Finally WRITE the self-contained HTML report `' + CODEFLOW_REPORT_NAME + '` AND the machine-readable file `' + CODEFLOW_COMMENTS_NAME + '` at the ROOT of this worktree (overwrite them if they exist). When everything is committed and both files are written, reply with the single word DONE.'
-        : 'Perform your COMPLETE code review of this pull request now. Work through every review step in order, then WRITE the self-contained HTML report `' + CODEFLOW_REPORT_NAME + '` AND the machine-readable findings file `' + CODEFLOW_COMMENTS_NAME + '` at the ROOT of this worktree (overwrite them if they exist). When both files are written and saved, reply with the single word DONE.';
+        : 'Perform your COMPLETE code review of this pull request now. Preserve all tracked PR files: do not change product/source/test/docs files, commit, or push. This is NOT a no-files task: you are explicitly authorized and REQUIRED to WRITE exactly the git-ignored, untracked output artifacts `' + CODEFLOW_REPORT_NAME + '` AND `' + CODEFLOW_COMMENTS_NAME + '` at the ROOT of this worktree (overwrite them if they exist). Writing these two reporting artifacts does not violate the non-mutating review constraint. Do not return the review only in chat. When both files are written and saved, reply with the single word DONE.';
       const sid = require('crypto').randomUUID();
       activeReview.sessionId = sid;
       lastReviewActivityAt = Date.now();

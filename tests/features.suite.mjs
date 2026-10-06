@@ -501,6 +501,8 @@ await t.test('Code Flow AI review reports durable live phase and tool activity',
     /cfReviewMeta\(pr\)/.test(html) &&
     /cfReviewActivity\(pr\)/.test(html),
     'PR cards render current work, model, reasoning effort, elapsed time, and recent activity');
+  t.ok(/\.cf-studio \.dvx-index \{ max-height:none; overflow:visible; \}/.test(html),
+    'the pull-request navigator grows with the page instead of creating a nested vertical scrollbar');
   t.ok(/extra\.reviewLive = _cfActiveReviews\.has\(key\)/.test(server) &&
     /extra\.reviewHeartbeatAt = new Date\(\)\.toISOString\(\)/.test(server),
     'status polls include a live server heartbeat for an in-process review');
@@ -537,6 +539,11 @@ await t.test('Code Flow AI review reports durable live phase and tool activity',
     /const recoveredComments = reviewCommentsArtifact \? _readCfReviewComments\(wtPath\) : null/.test(route) &&
     /reviewCommentsArtifact,\s*reviewComments,/.test(route),
     'recovery always produces system-readable findings and publishes their selectable count immediately');
+  t.ok(/Required output files — explicit write permission/.test(server) &&
+    /This is a \*\*non-mutating code review\*\*, not a no-files task/.test(server) &&
+    /Writing those two files is part of reporting the review/.test(server) &&
+    /This is NOT a no-files task: you are explicitly authorized and REQUIRED to WRITE/.test(route),
+    'the non-mutating review constraint explicitly permits and requires both untracked output artifacts');
   t.ok(/reviewHardTimeoutMinutes \|\| r\.reviewTimeoutMinutes/.test(server) &&
     /hardDeadline \+ 10 \* 60 \* 1000/.test(server) &&
     /The review exceeded its overall execution deadline/.test(server),
