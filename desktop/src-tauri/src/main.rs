@@ -621,7 +621,7 @@ fn dev_buddy_mode_size(
     match mode {
         "workspace" => (u32::MAX, u32::MAX),
         "peek" => (
-            peek_width.unwrap_or(400).clamp(340, 720),
+            peek_width.unwrap_or(400).max(340),
             peek_height.unwrap_or(640).clamp(260, 1200),
         ),
         "scratchpad" => (560, scratchpad_height.unwrap_or(560).clamp(420, 1200)),

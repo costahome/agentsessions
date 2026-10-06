@@ -25414,6 +25414,9 @@
                           </div>
                           <div class="cf-review-receipt-actions" x-show="cfReviewReceipt(pr).artifact">
                             <a class="cf-wt-link cf-wt-report" :href="cfReportUrl(pr, cfReviewReceipt(pr).artifact)" target="_blank" rel="noopener">Open new report</a>
+                            <button class="cf-wt-link" x-show="cfReviewReceipt(pr).retry" :disabled="!!cfBusy(pr)" @click="reviewWithAi(pr)">Re-review</button>
+                            <button class="cf-wt-link" x-show="cfReviewReceipt(pr).recreate" :disabled="!!cfBusy(pr)" @click="removeCfWorktree(pr)">Recreate clean checkout</button>
+                            <button class="cf-wt-link" x-show="cfReviewReceipt(pr).showRun" @click.stop="openCfReviewRun(pr)">View full run</button>
                             <span class="cf-wt-history-ts" x-text="cfReportTs(cfReviewReceipt(pr).artifact)"></span>
                           </div>
                         </div>
@@ -25496,6 +25499,9 @@
                           <div class="cf-review-receipt-actions">
                             <a class="cf-wt-link cf-wt-report" x-show="cfReviewReceipt(pr).artifact" :href="cfReportUrl(pr, cfReviewReceipt(pr).artifact)" target="_blank" rel="noopener">Open new report</a>
                             <button class="cf-wt-link" x-show="cfReviewReceipt(pr).artifact" @click="cfSetPane(pr, 'links')">View Artifacts</button>
+                            <button class="cf-wt-link" x-show="cfReviewReceipt(pr).retry" :disabled="!!cfBusy(pr)" @click="reviewWithAi(pr)">Re-review</button>
+                            <button class="cf-wt-link" x-show="cfReviewReceipt(pr).recreate" :disabled="!!cfBusy(pr)" @click="removeCfWorktree(pr)">Recreate clean checkout</button>
+                            <button class="cf-wt-link" x-show="cfReviewReceipt(pr).showRun" @click.stop="openCfReviewRun(pr)">View full run</button>
                           </div>
                         </div>
                         <div class="cf-review-progress" :class="{ live: cfReviewHealth(pr).live, stalled: cfReviewHealth(pr).stalled }" x-show="cfReviewing(pr)">
@@ -57560,21 +57566,37 @@ grpCollapsed: (() => { try { return JSON.parse(localStorage.getItem('cfGrpCollap
         cfReviewReceipt(pr) {
           const rec = this.cfWt(pr) || {};
           const outcome = rec.reviewAttemptOutcome;
-          if (outcome !== 'succeeded' && outcome !== 'blocked' && outcome !== 'failed') {
+          const legacyIncomplete = outcome === 'blocked' &&
+            rec.reviewCompletionReason === 'response-missing' &&
+            rec.reviewBlockerKind !== 'checkout';
+          const incomplete = outcome === 'incomplete' || legacyIncomplete;
+          if (outcome !== 'succeeded' && outcome !== 'blocked' && outcome !== 'failed' && !incomplete) {
             return { visible: false, failed: false, title: '', detail: '', artifact: null };
           }
           const succeeded = outcome === 'succeeded';
-          const blocked = outcome === 'blocked';
+          const blocked = outcome === 'blocked' && !incomplete;
           const finished = rec.reviewFinishedAt ? this.formatRelative(rec.reviewFinishedAt) : '';
+          const defaultDetail = succeeded
+            ? 'A new report is available.'
+            : (incomplete
+              ? 'The reviewer ended without an explicit verdict or saved report. Re-review using the current worktree.'
+              : (blocked
+                ? 'Code Flow preserved an uncertain checkout or local files. Open the report before recreating it.'
+                : rec.reviewError || 'Review failed.'));
           return {
             visible: true,
             failed: !succeeded,
             title: succeeded
               ? 'Latest review succeeded · new report available'
-              : (blocked ? 'Latest review blocked · diagnostic report available' : 'Latest review did not produce a new report'),
-            detail: (rec.reviewAttemptMessage || (succeeded ? 'A new report is available.' : rec.reviewError || 'Review failed.')) +
+              : (incomplete
+                ? 'Latest review incomplete · run it again'
+                : (blocked ? 'Review paused to protect the checkout' : 'Latest review did not produce a new report')),
+            detail: (rec.reviewBlockerSummary || (legacyIncomplete ? defaultDetail : rec.reviewAttemptMessage) || defaultDetail) +
               (finished ? ' · ' + finished : ''),
-            artifact: succeeded || blocked ? (rec.reviewArtifact || null) : null
+            artifact: succeeded || blocked || incomplete ? (rec.reviewArtifact || null) : null,
+            retry: incomplete,
+            recreate: blocked,
+            showRun: blocked || incomplete
           };
         },
         openCfReviewRun(pr) {

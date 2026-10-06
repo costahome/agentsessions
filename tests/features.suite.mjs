@@ -474,16 +474,16 @@ await t.test('Code Flow AI review reports durable live phase and tool activity',
     'safe tool activity is persisted while the reviewer works');
   t.ok(/recoveryRun && recoveryRun\.ok === false && recoveryRun\.error/.test(route) &&
     /Automatic report recovery failed/.test(route) &&
-    /reviewProgress: ok \? 'Review complete' : \(blocked \? 'Review blocked · diagnostic report ready' : 'Review failed'\)/.test(route),
+    /Review incomplete · run it again/.test(route),
     'timeouts and runtime failures remain visible instead of collapsing into a generic missing-artifact error');
   t.ok(/const reportBefore = _cfReportFingerprint\(wtPath\)/.test(route) &&
     /let freshReport = isFreshReport\(reportAfter\)/.test(route) &&
-    /const ok = !blocked && artifactAvailable/.test(route),
+    /const ok = !blocked && !incomplete && artifactAvailable/.test(route),
     'a new verified report is authoritative even if the agent runtime does not exit cleanly');
   t.ok(/before\s*\?\s*fingerprint\.sha !== before\.sha/.test(route) &&
     /commentsStable \|\| Date\.now\(\) >= reviewDeadlineMs - 15000/.test(route),
     'artifact completion cannot reuse or abort on an interim report and still recovers report-only runs near timeout');
-  t.ok(/reviewAttemptOutcome: ok \? 'succeeded' : \(blocked \? 'blocked' : 'failed'\)/.test(route) &&
+  t.ok(/reviewAttemptOutcome: ok \? 'succeeded' : \(blocked \? 'blocked' : \(incomplete \? 'incomplete' : 'failed'\)\)/.test(route) &&
     /reviewArtifact/.test(route) &&
     /reportHistory/.test(route),
     'the attempt stores its outcome, exact new artifact, and refreshed history together');
@@ -532,6 +532,11 @@ await t.test('Code Flow AI review reports durable live phase and tool activity',
     /reviewRecoveryAttempted:\s*recoveryNeeded/.test(route) &&
     /The agent did not provide a reason/.test(route),
     'a missing report is recovered from the completed response without a second open-ended AI run');
+  t.ok(/const findingPattern =/.test(server) &&
+    /text\.matchAll\(findingPattern\)/.test(server) &&
+    /const recoveredComments = reviewCommentsArtifact \? _readCfReviewComments\(wtPath\) : null/.test(route) &&
+    /reviewCommentsArtifact,\s*reviewComments,/.test(route),
+    'recovery always produces system-readable findings and publishes their selectable count immediately');
   t.ok(/reviewHardTimeoutMinutes \|\| r\.reviewTimeoutMinutes/.test(server) &&
     /hardDeadline \+ 10 \* 60 \* 1000/.test(server) &&
     /The review exceeded its overall execution deadline/.test(server),
@@ -584,12 +589,21 @@ await t.test('Code Flow AI review reports durable live phase and tool activity',
     /const preparationBlocked = !prep\.ok/.test(route) &&
     /if \(preparationBlocked\)/.test(route) &&
     /prepareReviewWorktree\(wtPath/.test(route) &&
-    /_cfWriteBlockedReviewReport/.test(route) &&
-    /reviewAttemptOutcome: ok \? 'succeeded' : \(blocked \? 'blocked'/.test(route),
+    /_cfWriteBlockedReviewReport\(wtPath, pr, diagnosticReason,/.test(route) &&
+    /reviewBlockerKind = preparationBlocked \? 'checkout' : 'review-incomplete'/.test(route),
     'stale review checkouts are refreshed safely and unrecoverable states still produce a blocked diagnostic report');
-  t.ok(/outcome !== 'blocked'/.test(html) &&
-    /Latest review blocked · diagnostic report available/.test(html),
-    'blocked attempts expose their diagnostic report instead of disappearing from the receipt UI');
+  t.ok(/Latest review incomplete · run it again/.test(html) &&
+    /Review paused to protect the checkout/.test(html) &&
+    /Recreate clean checkout/.test(html) &&
+    />Re-review</.test(html) &&
+    /legacyIncomplete/.test(html),
+    'review receipts distinguish retryable incomplete runs from checkouts paused to protect local work');
+  t.ok(/function _cfBlockedReviewHtml/.test(server) &&
+    /The review worktree is available; recreating it is not required/.test(server) &&
+    /Protected local files/.test(server) &&
+    /function _upgradeLegacyBlockedReviewHtml/.test(server) &&
+    /_themeReportHtml\(r\.content, rec\)/.test(server),
+    'blocked reports explain verified facts and concrete next steps, including for existing cached diagnostics');
   t.ok(/class="cf-wt-link cf-run-view-btn"/.test(html) &&
     /openCfReviewRun\(pr\)/.test(html) &&
     html.indexOf('openCfReviewRun(pr) {') > html.indexOf('cfReviewReceipt(pr) {'),

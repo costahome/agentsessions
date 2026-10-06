@@ -6291,23 +6291,74 @@ function _cfWriteArtifactFile(wtPath, name, content) {
   }
 }
 
-function _cfWriteBlockedReviewReport(wtPath, pr, reason) {
+function _cfBlockedReviewHtml(pr, reason, context = {}) {
   const esc = (v) => String(v == null ? '' : v)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   const why = String(reason || 'The review could not safely analyze the current PR revision.');
-  const html = '<!doctype html><html><head><meta charset="utf-8"><title>Blocked PR review</title>' +
-    '<style>body{font:14px/1.55 system-ui,sans-serif;max-width:980px;margin:32px auto;padding:0 24px}' +
-    '.verdict{border-left:4px solid #d29922;padding:14px 16px;background:#d2992218}code,pre{font-family:ui-monospace,monospace}' +
-    'pre{white-space:pre-wrap;border:1px solid #8885;padding:12px;border-radius:8px}</style></head><body>' +
-    '<div class="verdict blocked"><h1>Review blocked</h1><p>This diagnostic report was generated because the AI review could not safely complete.</p></div>' +
-    '<h2>Pull request</h2><p><strong>#' + esc(pr.id) + '</strong> ' + esc(pr.title || '') + '</p>' +
-    (pr.url ? '<p><a href="' + esc(pr.url) + '">Open pull request</a></p>' : '') +
-    '<h2>Why it stopped</h2><pre>' + esc(why) + '</pre>' +
-    '<h2>Next action</h2><p>Reconcile the review worktree with the current PR head while preserving any local work, then run the review again.</p>' +
-    '<p class="meta">Generated ' + esc(new Date().toISOString()) + '</p></body></html>';
+  const checkoutBlocked = context.kind === 'checkout';
+  const localChanges = context.state === 'local-changes';
+  const title = checkoutBlocked
+    ? (localChanges ? 'Review paused to protect local work' : 'Review checkout needs attention')
+    : 'Review ended before producing a report';
+  const summary = checkoutBlocked
+    ? (localChanges
+      ? 'The saved review checkout is on an older PR revision and contains local changes. Code Flow preserved those files instead of resetting them.'
+      : 'Code Flow could not verify that the review checkout matched the current pull request revision, so it did not run the reviewer against uncertain code.')
+    : 'The reviewer stopped without saving a report, and its response did not contain an explicit verdict and findings. Code Flow preserved the partial run instead of presenting it as a completed review.';
+  const changed = Array.isArray(context.changed) ? context.changed.filter(Boolean).slice(0, 20) : [];
+  const facts = checkoutBlocked
+    ? [
+      context.localHead ? 'Checkout commit: ' + String(context.localHead).slice(0, 12) : '',
+      context.remoteHead ? 'Current PR commit: ' + String(context.remoteHead).slice(0, 12) : '',
+      localChanges ? 'Local changes were detected and left untouched.' : 'The current PR commit could not be checked out and verified.'
+    ].filter(Boolean)
+    : [
+      'The review worktree is available; recreating it is not required.',
+      'The reviewer did not save pr-review-report.html.',
+      'The captured response had no explicit review verdict or actionable findings.'
+    ];
+  const steps = checkoutBlocked
+    ? (localChanges
+      ? [
+        '<strong>Open the review worktree</strong> and inspect the local files listed below.',
+        'Keep the work by committing or copying it elsewhere, or confirm it can be discarded.',
+        'Use <strong>Recreate</strong> on the Code Flow card to make a clean checkout, then select <strong>Re-review</strong>.'
+      ]
+      : [
+        'Select <strong>Recreate</strong> on the Code Flow card to rebuild the review checkout from the current PR head.',
+        'Select <strong>Re-review</strong>.',
+        'If it stops again, open <strong>View full run</strong> for the failing fetch or checkout operation.'
+      ])
+    : [
+      'Select <strong>Re-review</strong> on the Code Flow card. It will reuse the current worktree.',
+      'If the next attempt also ends without a report, select <strong>View full run</strong> to inspect the final reviewer activity.',
+      'Use <strong>Recreate</strong> only if a later message specifically reports stale checkout data or protected local changes.'
+    ];
+  return `<!doctype html><html data-cp-themed><head><script>
+  (() => {
+    const param = new URLSearchParams(window.location.search).get("scoutTheme");
+    const theme = param || (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+    document.documentElement.setAttribute("data-theme", theme);
+  })();
+</script><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>PR review needs attention</title><style>
+:root{color-scheme:light;--cp-bg:#f7f4ef;--cp-surface:#fff;--cp-surface-soft:#f5f5f5;--cp-border:#dedede;--cp-text:#242424;--cp-text-muted:#5c5c5c;--cp-accent:#b11f4b;--cp-warning:#b45309;--cp-link:#0078d4}html[data-theme="dark"]{color-scheme:dark;--cp-bg:#3d3b3a;--cp-surface:#292929;--cp-surface-soft:#2e2e2e;--cp-border:#474747;--cp-text:#dedede;--cp-text-muted:#b0b0b0;--cp-accent:#fd8ea1;--cp-warning:#fbbf24;--cp-link:#4da6ff}*{box-sizing:border-box}body{margin:0;background:var(--cp-bg);color:var(--cp-text);font:15px/1.6 "Segoe UI",Aptos,Calibri,-apple-system,BlinkMacSystemFont,sans-serif}.page{width:min(980px,calc(100% - 40px));margin:32px auto 56px}.notice,.card{padding:20px 22px;border:1px solid var(--cp-border);border-radius:16px;background:var(--cp-surface);box-shadow:0 0 2px rgba(0,0,0,.12),0 1px 2px rgba(0,0,0,.14)}.notice{border-left:4px solid var(--cp-warning)}.notice h1{margin:0 0 8px;font-size:26px;line-height:1.3}.notice p,.muted{color:var(--cp-text-muted)}.card{margin-top:18px}.eyebrow{margin:0 0 4px;color:var(--cp-text-muted);font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase}h2{margin:0 0 12px;font-size:19px}p{margin:10px 0}a{color:var(--cp-link);text-underline-offset:2px}ol,ul{padding-left:24px}li+li{margin-top:7px}.technical{padding:12px 14px;border:1px solid var(--cp-border);border-radius:10px;background:var(--cp-surface-soft);font:13px/1.5 Consolas,"Courier New",Courier,monospace;white-space:pre-wrap;overflow-wrap:anywhere}.files{font-family:Consolas,"Courier New",Courier,monospace;font-size:13px}.meta{margin:18px 4px 0;color:var(--cp-text-muted);font-size:12px}@media(max-width:680px){.page{width:calc(100% - 24px);margin-top:16px}.notice,.card{padding:17px 16px}}
+</style></head><body><main class="page">
+<section class="notice"><h1>${esc(title)}</h1><p>${esc(summary)}</p></section>
+<section class="card"><p class="eyebrow">Pull request</p><h2>#${esc(pr.id)} ${esc(pr.title || '')}</h2>${pr.url ? `<a href="${esc(pr.url)}" target="_blank" rel="noopener noreferrer">Open pull request</a>` : ''}</section>
+<section class="card"><h2>What Code Flow verified</h2><ul>${facts.map(item => `<li>${esc(item)}</li>`).join('')}</ul></section>
+${changed.length ? `<section class="card"><h2>Protected local files</h2><ul class="files">${changed.map(item => `<li>${esc(typeof item === 'string' ? item : item.path || item.file || JSON.stringify(item))}</li>`).join('')}</ul></section>` : ''}
+<section class="card"><h2>What to do</h2><ol>${steps.map(item => `<li>${item}</li>`).join('')}</ol></section>
+<details class="card"><summary>Technical detail</summary><div class="technical">${esc(why)}</div></details>
+<p class="meta">Generated ${esc(new Date().toISOString())}</p></main></body></html>`;
+}
+
+function _cfWriteBlockedReviewReport(wtPath, pr, reason, context = {}) {
+  const html = _cfBlockedReviewHtml(pr, reason, context);
   _cfWriteArtifactFile(wtPath, CODEFLOW_REPORT_NAME, html);
   _cfWriteArtifactFile(wtPath, CODEFLOW_COMMENTS_NAME, JSON.stringify({
-    summary: 'Review blocked: ' + why.slice(0, 500), comments: []
+    summary: (context.kind === 'checkout' ? 'Review checkout needs attention: ' : 'Review incomplete: ') +
+      String(reason || '').slice(0, 500),
+    comments: []
   }, null, 2));
 }
 
@@ -6322,6 +6373,28 @@ function _cfRecoveredReviewComments(output) {
       const parsed = JSON.parse(candidate.trim());
       if (parsed && typeof parsed.summary === 'string' && Array.isArray(parsed.comments)) return parsed;
     } catch {}
+  }
+
+  const comments = [];
+  const findingPattern = /(?:^|\n)#{0,6}\s*(?:\*\*)?Finding(?:\s*[—:-]\s*|\s+)(blocker|critical|major|minor|warning|nit|suggestion)?\s*:?(?:\*\*)?\s*`?([^`\n:]+?\.[A-Za-z0-9]+)\s*:\s*(\d+)`?\s*(?:\*\*)?\s*\n([\s\S]*?)(?=\n(?:#{1,6}\s+|(?:\*\*)?Finding(?:\s*[—:-])|---\s*$)|$)/gim;
+  for (const match of text.matchAll(findingPattern)) {
+    const severity = String(match[1] || 'minor').toLowerCase();
+    const file = String(match[2] || '').trim().replace(/^[\\/]+/, '').replace(/\\/g, '/');
+    const line = Number(match[3]);
+    const section = String(match[4] || '').trim();
+    if (!file || !Number.isFinite(line) || !section) continue;
+    const paragraphs = section.split(/\n\s*\n/).map(part => part.trim()).filter(Boolean);
+    const title = paragraphs[0].replace(/^[-*]\s*/, '').replace(/\s+/g, ' ').slice(0, 180);
+    const body = section.replace(/\n---[\s\S]*$/, '').trim().slice(0, 4000);
+    comments.push({ file, line, severity, title, body });
+  }
+  if (comments.length) {
+    const verdict = text.match(/\b(?:final\s+)?verdict\s*:?\s*\**([^\n*]+)/i);
+    return {
+      summary: verdict ? verdict[1].trim().slice(0, 500) :
+        `Recovered ${comments.length} actionable review finding${comments.length === 1 ? '' : 's'}.`,
+      comments
+    };
   }
 
   return {
@@ -7445,25 +7518,44 @@ app.post('/api/codeflow/pr/review', async (req, res) => {
           recoverySucceeded ? 'success' : 'error');
       }
       let generatedDiagnostic = false;
+      let reviewBlockerKind = '';
+      let reviewBlockerSummary = '';
       if (!freshReport || !report) {
         const diagnosticReason = String(
           (recoveryRun && (recoveryRun.error || recoveryRun.output)) ||
           recoveryAcc || (run && (run.error || run.output)) || acc ||
           'The agent stopped without creating the required report.'
         ).trim().slice(-4000);
-        _cfWriteBlockedReviewReport(wtPath, pr, diagnosticReason);
+        reviewBlockerKind = preparationBlocked ? 'checkout' : 'review-incomplete';
+        reviewBlockerSummary = preparationBlocked
+          ? (prep.state === 'local-changes'
+            ? 'The review checkout is behind the PR and has local changes. Code Flow preserved them instead of resetting the folder.'
+            : 'Code Flow could not verify a checkout at the current PR commit.')
+          : 'The reviewer ended without saving a report or returning an explicit verdict and findings. Re-review using the current worktree.';
+        _cfWriteBlockedReviewReport(wtPath, pr, diagnosticReason, {
+          kind: preparationBlocked ? 'checkout' : 'review-incomplete',
+          state: prep.state,
+          changed: prep.changed,
+          localHead: prep.localHead,
+          remoteHead: prep.remoteHead,
+          completionReason: run && run.completionReason
+        });
         generatedDiagnostic = true;
         trace('recovery', 'Generated blocked diagnostic report',
-          'The AI could not complete the review artifact contract, so the system created an honest diagnostic report.', 'warning', diagnosticReason);
+          preparationBlocked
+            ? 'The checkout could not be verified safely, so the system preserved it and created an actionable diagnostic report.'
+            : 'The reviewer ended without a complete review, so the system created an actionable diagnostic report.',
+          'warning', diagnosticReason);
         try { reports = devitems.findAndCacheReports(CODEFLOW_REPORT_BOARD, devId, wtPath) || []; } catch {}
         reportAfter = _cfReportFingerprint(wtPath);
         freshReport = isFreshReport(reportAfter);
         report = reports.find(r => r && r.rel === CODEFLOW_REPORT_NAME) || null;
       }
       const effectiveRun = recoveryNeeded ? recoveryRun : run;
-      const blocked = preparationBlocked || generatedDiagnostic;
+      const blocked = preparationBlocked;
+      const incomplete = generatedDiagnostic && !preparationBlocked;
       const artifactAvailable = freshReport && !!report;
-      const ok = !blocked && artifactAvailable;
+      const ok = !blocked && !incomplete && artifactAvailable;
       const runtimeWarning = ok && effectiveRun && effectiveRun.ok === false
         ? String(effectiveRun.error || 'The runtime did not exit cleanly after producing the report.')
         : '';
@@ -7495,22 +7587,40 @@ app.post('/api/codeflow/pr/review', async (req, res) => {
       const commentsAfter = _cfArtifactFingerprint(wtPath, CODEFLOW_COMMENTS_NAME);
       const reviewCommentsArtifact = isFreshArtifact(commentsAfter, commentsBefore) &&
         commentsAfter.mtime >= reportAfter.mtime ? commentsAfter : null;
-      trace('result', ok ? 'Review completed' : (blocked ? 'Review blocked' : 'Review failed'),
+      const recoveredComments = reviewCommentsArtifact ? _readCfReviewComments(wtPath) : null;
+      const postedComments = _cfPostedSet(_getCfWt(key) || rec);
+      const dismissedComments = _cfDismissedSet(_getCfWt(key) || rec);
+      const reviewComments = recoveredComments
+        ? recoveredComments.comments.filter(comment => {
+          const fingerprint = _cfCommentFp(comment);
+          return !postedComments.has(fingerprint) && !dismissedComments.has(fingerprint);
+        }).length
+        : 0;
+      trace('result', ok ? 'Review completed' : (blocked ? 'Review paused' : (incomplete ? 'Review incomplete' : 'Review failed')),
         ok ? ('A new PR review report was generated.' + (runtimeWarning ? ' Runtime note: ' + runtimeWarning : '')) :
-          (blocked ? 'A diagnostic report was generated for the blocker.' : reviewFailure),
-        ok ? 'success' : (blocked ? 'warning' : 'error'), runtimeWarning);
+          (blocked ? reviewBlockerSummary : (incomplete ? reviewBlockerSummary : reviewFailure)),
+        ok ? 'success' : (blocked || incomplete ? 'warning' : 'error'), runtimeWarning);
       saveAttempt({
         reports,
         reportHistory,
-        reviewStatus: ok || blocked ? 'done' : 'error',
+        reviewStatus: ok || blocked || incomplete ? 'done' : 'error',
         reviewError: ok ? null : reviewFailure,
-        reviewAttemptOutcome: ok ? 'succeeded' : (blocked ? 'blocked' : 'failed'),
+        reviewAttemptOutcome: ok ? 'succeeded' : (blocked ? 'blocked' : (incomplete ? 'incomplete' : 'failed')),
         reviewAttemptMessage: ok
           ? 'Review completed successfully. A new PR review report is available.' +
             (runtimeWarning ? ' The runtime did not exit cleanly, but the report was verified.' : '')
-          : (blocked ? 'The review was blocked, but a diagnostic report explains why and what to do next.' : reviewFailure),
+          : (blocked
+            ? reviewBlockerSummary + ' Open the report for the protected files and exact recovery steps.'
+            : (incomplete ? reviewBlockerSummary : reviewFailure)),
+        reviewBlockerKind,
+        reviewBlockerState: preparationBlocked ? prep.state : '',
+        reviewBlockerSummary,
+        reviewBlockerChanged: preparationBlocked && Array.isArray(prep.changed) ? prep.changed : [],
+        reviewBlockerLocalHead: preparationBlocked ? (prep.localHead || '') : '',
+        reviewBlockerRemoteHead: preparationBlocked ? (prep.remoteHead || '') : '',
         reviewArtifact,
         reviewCommentsArtifact,
+        reviewComments,
         reviewResult: [
           String((run && run.output) || acc || '').trim(),
           recoveryNeeded ? '--- Automatic report recovery ---\n' + String((recoveryRun && recoveryRun.output) || recoveryAcc || '').trim() : ''
@@ -7522,9 +7632,11 @@ app.post('/api/codeflow/pr/review', async (req, res) => {
         reviewRuntimeWarning: runtimeWarning,
         reviewRecoveryAttempted: recoveryNeeded,
         reviewRecoveryOutcome: recoveryNeeded ? (ok ? 'succeeded' : 'failed') : '',
-        reviewPhase: ok || blocked ? 'done' : 'error',
-        reviewProgress: ok ? 'Review complete' : (blocked ? 'Review blocked · diagnostic report ready' : 'Review failed'),
-        reviewProgressDetail: ok ? 'New report generated and cached.' : (blocked ? 'Open the diagnostic report for the blocker and remediation.' : reviewFailure),
+        reviewPhase: ok || blocked || incomplete ? 'done' : 'error',
+        reviewProgress: ok ? 'Review complete' : (blocked
+          ? 'Review paused · local checkout needs attention'
+          : (incomplete ? 'Review incomplete · run it again' : 'Review failed')),
+        reviewProgressDetail: ok ? 'New report generated and cached.' : (blocked || incomplete ? reviewBlockerSummary : reviewFailure),
         reviewFinishedAt: new Date().toISOString()
       });
     } catch (e) {
@@ -8137,9 +8249,31 @@ function _upgradeLegacyRecoveredReviewHtml(html) {
   return upgraded.replace(/<\/head>/i, css + '</head>');
 }
 
-function _themeReportHtml(html) {
+function _upgradeLegacyBlockedReviewHtml(html, rec) {
+  if (!/<title>Blocked PR review<\/title>/i.test(html) || !rec) return html;
+  const reasonMatch = html.match(/<h2>Why it stopped<\/h2>\s*<pre>([\s\S]*?)<\/pre>/i);
+  const decodeEscaped = (v) => String(v || '')
+    .replace(/&quot;/g, '"').replace(/&gt;/g, '>').replace(/&lt;/g, '<').replace(/&amp;/g, '&');
+  const checkoutBlocked = rec.reviewBlockerKind === 'checkout' ||
+    rec.reviewCompletionReason === 'worktree-preparation-blocked';
+  return _cfBlockedReviewHtml({
+    id: rec.prId,
+    title: rec.prTitle || '',
+    url: rec.prUrl || ''
+  }, decodeEscaped(reasonMatch && reasonMatch[1] || rec.reviewError || ''), {
+    kind: checkoutBlocked ? 'checkout' : 'review-incomplete',
+    state: rec.reviewBlockerState || '',
+    changed: rec.reviewBlockerChanged || [],
+    localHead: rec.reviewBlockerLocalHead || '',
+    remoteHead: rec.reviewBlockerRemoteHead || '',
+    completionReason: rec.reviewCompletionReason || ''
+  });
+}
+
+function _themeReportHtml(html, context) {
   if (Buffer.isBuffer(html)) html = html.toString('utf8');
   if (typeof html !== 'string') return html;
+  html = _upgradeLegacyBlockedReviewHtml(html, context);
   html = _upgradeLegacyRecoveredReviewHtml(html);
   if (!/<html[\s>]/i.test(html) || /data-cp-themed/i.test(html)) return html;
   const detect = `<script>(function(){try{var p=new URLSearchParams(location.search).get('scoutTheme');var t=p||((window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches)?'dark':'light');document.documentElement.setAttribute('data-theme',t==='dark'?'dark':'light');}catch(e){}})();</script>`;
@@ -8199,7 +8333,7 @@ app.get('/api/codeflow/pr/report', (req, res) => {
       _setDownloadDisposition(res, file);
       res.send(r.content);
     } else {
-      res.send(isHtml ? _themeReportHtml(r.content) : r.content);
+      res.send(isHtml ? _themeReportHtml(r.content, rec) : r.content);
     }
   } catch (e) {
     res.status(e && e.status ? e.status : 404).send((e && e.message) || 'Failed to read report');

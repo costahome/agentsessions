@@ -1631,7 +1631,7 @@
       position: absolute;
       left: var(--buddy-left);
       top: calc(var(--buddy-top) + 154px);
-      width: min(520px, calc(100vw - 24px));
+      width: calc(100vw - var(--buddy-left) - 12px);
       display: none;
       border: 1px solid var(--cp-border);
       border-radius: 12px;
@@ -1643,6 +1643,7 @@
     .stage[data-anchor-x="right"] .hover-preview {
       right: calc(100% - var(--buddy-left) - 132px);
       left: auto;
+      width: calc(100vw - (100% - var(--buddy-left) - 132px) - 12px);
     }
     .stage[data-anchor-y="bottom"] .hover-preview {
       top: auto;
@@ -1783,6 +1784,11 @@
       line-height: 1.3;
       text-overflow: ellipsis;
       white-space: nowrap;
+    }
+    .hover-preview.auto-width .preview-title {
+      overflow: visible;
+      text-overflow: clip;
+      white-space: normal;
     }
     .preview-meta { margin-top: 2px; color: var(--urgency-color); font-size: 10px; font-weight: 600; }
     .source-status {
@@ -2644,26 +2650,31 @@
       }
 
       function automaticPeekWidth(items = status?.list || []) {
-        const sorted = sortedWorkItems(items);
-        const entries = previewTab === 'all'
-          ? [...new Map(sorted.map(item => [item.id, item])).values()]
-          : previewTab === 'starred'
-          ? sorted.filter(item => item.starred)
-          : previewTab === 'ongoing'
-            ? sorted.filter(item => item.ongoing)
-            : sorted.filter(item => !item.ongoing);
-        const actionCount = entries.reduce((maximum, item) =>
-          Math.max(maximum, 3 + Number(item.priority !== 'low') + Number(!!item.link) + Number(!!item.route)), 3);
-        const titleLength = entries.reduce((maximum, item) =>
-          Math.max(maximum, String(item.title || '').length), 20);
-        const titleWidth = Math.max(150, Math.min(260, titleLength * 5));
-        return Math.max(400, Math.min(640, 52 + titleWidth + actionCount * 35));
+        const preview = $('hoverPreview');
+        const restoreAutoClass = preview.classList.contains('auto-width');
+        preview.classList.remove('auto-width');
+        const rows = [...$('previewList').querySelectorAll('.preview-item')];
+        const contentWidth = rows.reduce((maximum, row) => {
+          const read = row.querySelector('.preview-read');
+          const title = row.querySelector('.preview-title');
+          const meta = row.querySelector('.preview-meta');
+          const actions = [...row.querySelectorAll(':scope > .quick-action')];
+          const textWidth = Math.max(title?.scrollWidth || 0, meta?.scrollWidth || 0, 150);
+          const actionWidth = actions.reduce((total, action) => total + action.offsetWidth, 0);
+          const gapWidth = Math.max(0, actions.length) * 8;
+          const rowChrome = 4 + 20;
+          return Math.max(maximum, textWidth + actionWidth + gapWidth + rowChrome +
+            ((read?.offsetWidth || 0) - (read?.clientWidth || 0)));
+        }, 0);
+        const headerWidth = preview.querySelector('.hover-preview-head')?.scrollWidth || 0;
+        if (restoreAutoClass) preview.classList.add('auto-width');
+        return Math.max(400, Math.ceil(Math.max(contentWidth, headerWidth) + 20));
       }
 
       function currentPeekWidth() {
         return peekWidthMode === 'auto'
           ? automaticPeekWidth()
-          : Math.max(340, Math.min(720, customPeekWidth));
+          : Math.max(340, customPeekWidth);
       }
 
       async function setMode(mode, requestedPeekWidth = null, requestedScratchpadHeight = null, requestedPeekHeight = null) {
@@ -3533,6 +3544,7 @@
         $('previewList').innerHTML = current.entries.length
           ? current.entries.map(renderItem).join('')
           : `<div class="empty">No ${current.label.toLowerCase()} items.</div>`;
+        $('hoverPreview').classList.toggle('auto-width', peekWidthMode === 'auto');
         $('peekAutoWidth').classList.toggle('active', peekWidthMode === 'auto');
         if (peekOpen) schedulePeekResize();
       }
@@ -4549,7 +4561,7 @@
         } else {
           const base = currentPeekWidth();
           peekWidthMode = 'custom';
-          customPeekWidth = Math.max(340, Math.min(720, base + (action === 'wider' ? 60 : -60)));
+          customPeekWidth = Math.max(340, base + (action === 'wider' ? 80 : -80));
           localStorage.setItem('dev-buddy-peek-width', String(customPeekWidth));
         }
         localStorage.setItem('dev-buddy-peek-width-mode', peekWidthMode);

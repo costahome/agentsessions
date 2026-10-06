@@ -171,8 +171,15 @@ await t.test('work UI uses a compact list-detail workspace and one completion ac
     /id="peekAutoWidth"/.test(html) &&
     /id="peekWider"/.test(html) &&
     /function automaticPeekWidth/.test(html) &&
+    /querySelectorAll\('\.preview-item'\)/.test(html) &&
+    /title\?\.scrollWidth/.test(html) &&
+    /classList\.toggle\('auto-width', peekWidthMode === 'auto'\)/.test(html) &&
+    /width: calc\(100vw - var\(--buddy-left\) - 12px\)/.test(html) &&
+    /customPeekWidth = Math\.max\(340, base \+ \(action === 'wider' \? 80 : -80\)\)/.test(html) &&
     /dev-buddy-peek-width-mode/.test(html) &&
     /peek_width: Option<u32>/.test(desktop) &&
+    /peek_width\.unwrap_or\(400\)\.max\(340\)/.test(desktop) &&
+    !/peek_width\.unwrap_or\(400\)\.clamp\(340, 720\)/.test(desktop) &&
     /peek_height: Option<u32>/.test(desktop) &&
     /set_resizable\(mode != "peek" && mode != "scratchpad"\)/.test(desktop) &&
     !/"start_dev_buddy_resize"/.test(desktopPermissions),
